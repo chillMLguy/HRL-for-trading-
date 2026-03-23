@@ -55,7 +55,3 @@ allocates capital across them should outperform any single one.
 | Aggressive   | net_ret + 0.1·sign(ret)·|ret_5|                    | momentum bonus|
 
 
-## Phase 1 (next)
-Add HMM regime labeling (hmmlearn) and test the oracle switching rule:
-"If we knew the regime perfectly, what is the upper bound on performance?"
-That number is your thesis target for the high-level agent to approach.
