@@ -41,11 +41,11 @@ from env.trading_env import TradingEnv, AgentType
 # ------------------------------------------------------------------
 # Hyperparameters (shared across all three agents)
 # ------------------------------------------------------------------
-TIMESTEPS      = 50000  # total env steps per agent
+TIMESTEPS      = 500000  # total env steps per agent
 EVAL_FREQ      = 10000    # evaluate every N steps
 LEARNING_RATE  = 3e-4
 BATCH_SIZE     = 256
-BUFFER_SIZE    = 10000
+BUFFER_SIZE    = 100000
 GAMMA          = 0.99
 TAU            = 0.005
 ENT_COEF       = "auto"    # SAC auto-tunes entropy coefficient
