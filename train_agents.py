@@ -1,15 +1,4 @@
 """
-Phase 0 — Agent Training
-========================
-Trains three SAC agents (conservative, neutral, aggressive) on
-the same price series. Each agent is identical in architecture
-and hyperparameters — only the reward function differs.
-
-Usage
------
-    python train_agents.py --ticker SPY --start 2010-01-01 --end 2022-12-31
-    python train_agents.py --ticker BTC-USD --start 2018-01-01 --end 2023-12-31
-
 Outputs
 -------
     models/conservative_agent/  — SB3 SAC model

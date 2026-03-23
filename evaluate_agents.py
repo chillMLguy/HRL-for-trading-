@@ -1,23 +1,3 @@
-"""
-Phase 0 — Evaluation & Regime-Conditional Analysis
-===================================================
-Loads trained agents, runs them on the held-out test set,
-and produces:
-  1. Standard performance metrics (Sharpe, Sortino, max DD, Calmar)
-  2. Regime-conditional performance table (the key Phase 0 result)
-  3. Equity curves (saved as CSV for plotting)
-  4. Correlation of agent positions (do they disagree when it matters?)
-
-Regime labeling (simple, no HMM yet — that's Phase 1):
-  - VIX percentile bucketing on the test period
-  - Realized vol tertiles (low / medium / high)
-
-Usage
------
-    python evaluate_agents.py --ticker SPY --start 2023-01-01 --end 2024-12-31
-    (test period should be AFTER the training window)
-"""
-
 import argparse
 import os
 import warnings

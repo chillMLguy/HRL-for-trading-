@@ -1,15 +1,3 @@
-"""
-Phase 0 — Visualisation
-========================
-Plots the equity curves, position distributions, and regime-
-conditional performance for all three agents. Run after
-evaluate_agents.py has produced equity_curves.csv.
-
-Usage
------
-    python plot_results.py --csvpath equity_curves.csv
-"""
-
 import argparse
 import numpy as np
 import pandas as pd
