@@ -41,11 +41,11 @@ from env.trading_env import TradingEnv, AgentType
 # ------------------------------------------------------------------
 # Hyperparameters (shared across all three agents)
 # ------------------------------------------------------------------
-TIMESTEPS      = 500_00  # total env steps per agent
-EVAL_FREQ      = 10_000    # evaluate every N steps
+TIMESTEPS      = 50000  # total env steps per agent
+EVAL_FREQ      = 10000    # evaluate every N steps
 LEARNING_RATE  = 3e-4
 BATCH_SIZE     = 256
-BUFFER_SIZE    = 100_00
+BUFFER_SIZE    = 10000
 GAMMA          = 0.99
 TAU            = 0.005
 ENT_COEF       = "auto"    # SAC auto-tunes entropy coefficient
@@ -66,7 +66,7 @@ def download_data(ticker: str, start: str, end: str) -> pd.Series:
 def train_split(prices: pd.Series, train_ratio: float = 0.8):
     """Chronological train / test split (no shuffling — avoids lookahead bias)."""
     split = int(len(prices) * train_ratio)
-    return prices.iloc[:split], prices.iloc[split:]
+    return prices.iloc[:split], prices.iloc[split:]    
 
 
 def make_env(prices: pd.Series, agent_type: AgentType, seed: int = 0):
