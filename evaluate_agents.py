@@ -1,231 +1,280 @@
+
 import argparse
 import os
 import warnings
 warnings.filterwarnings("ignore")
-
+ 
 import numpy as np
 import pandas as pd
 import yfinance as yf
-
 from stable_baselines3 import SAC
-
 from env.trading_env import TradingEnv, AgentType
+ 
+ 
+BARS_PER_YEAR = {"1d": 252, "1h": 1638, "30m": 3276, "15m": 6552}
 
+# ── Metrics ───────────────────────────────────────────────────────
 
-# ------------------------------------------------------------------
-# Metrics
-# ------------------------------------------------------------------
+def sharpe(r, ann=1638):
+    s = r.std()
+    return float(np.sqrt(ann) * r.mean() / s) if s > 1e-10 else 0.0
 
-def sharpe(returns: np.ndarray, rf: float = 0.0, ann: int = 252) -> float:
-    """Annualized Sharpe ratio."""
-    excess = returns - rf / ann
-    if excess.std() < 1e-10:
-        return 0.0
-    return float(np.sqrt(ann) * excess.mean() / excess.std())
+def sortino(r, ann=1638):
+    down = r[r < 0]
+    ds = down.std() if len(down) > 1 else 1e-10
+    return float(np.sqrt(ann) * r.mean() / ds)
 
-
-def sortino(returns: np.ndarray, rf: float = 0.0, ann: int = 252) -> float:
-    """Annualized Sortino ratio (uses downside deviation only)."""
-    excess = returns - rf / ann
-    downside = excess[excess < 0]
-    dd_std = downside.std() if len(downside) > 1 else 1e-10
-    return float(np.sqrt(ann) * excess.mean() / dd_std)
-
-
-def max_drawdown(equity_curve: np.ndarray) -> float:
-    """Maximum peak-to-trough drawdown."""
-    peak = np.maximum.accumulate(equity_curve)
-    dd = (peak - equity_curve) / np.where(peak > 0, peak, 1e-10)
+def max_drawdown(eq):
+    peak = np.maximum.accumulate(eq)
+    dd   = (peak - eq) / np.where(peak > 0, peak, 1e-10)
     return float(dd.max())
 
-
-def calmar(returns: np.ndarray, equity_curve: np.ndarray, ann: int = 252) -> float:
-    """Calmar ratio = annualized return / max drawdown."""
-    ann_ret = float(np.mean(returns) * ann)
-    mdd = max_drawdown(equity_curve)
-    return ann_ret / mdd if mdd > 1e-6 else 0.0
-
-
-def compute_metrics(returns: np.ndarray, equity: np.ndarray) -> dict:
+def calmar(r, eq, ann=1638):
+    mdd = max_drawdown(eq)
+    return float(r.mean() * ann / mdd) if mdd > 1e-6 else 0.0
+ 
+def cvar_metric(r, alpha=0.95):
+    """Historical CVaR (Expected Shortfall) at confidence alpha."""
+    var = np.percentile(r, (1 - alpha) * 100)
+    tail = r[r <= var]
+    return float(tail.mean()) if len(tail) > 0 else 0.0
+ 
+def omega_metric(r, threshold=0.0):
+    """Omega ratio at given threshold."""
+    gains  = (r[r > threshold] - threshold).sum()
+    losses = (threshold - r[r < threshold]).sum()
+    return float(gains / losses) if losses > 1e-10 else 2.0
+ 
+def compute_metrics(r, eq, ann=1638):
     return {
-        "Total return (%)":  round(float((equity[-1] / equity[0] - 1) * 100), 2),
-        "Ann. return (%)":   round(float(np.mean(returns) * 252 * 100), 2),
-        "Sharpe":            round(sharpe(returns), 3),
-        "Sortino":           round(sortino(returns), 3),
-        "Max drawdown (%)":  round(max_drawdown(equity) * 100, 2),
-        "Calmar":            round(calmar(returns, equity), 3),
-        "Win rate (%)":      round(float(np.mean(returns > 0) * 100), 1),
+        "Total ret (%)":  round((eq[-1] / eq[0] - 1) * 100, 2),
+        "Ann. ret (%)":   round(r.mean() * ann * 100, 2),
+        "Sharpe":         round(sharpe(r, ann), 3),
+        "Sortino":        round(sortino(r, ann), 3),
+        "MaxDD (%)":      round(max_drawdown(eq) * 100, 2),
+        "Calmar":         round(calmar(r, eq, ann), 3),
+        "CVaR 95% (%)":   round(cvar_metric(r) * 100, 3),
+        "Omega":          round(omega_metric(r), 3),
+        "Win rate (%)":   round((r > 0).mean() * 100, 1),
     }
-
-
-# ------------------------------------------------------------------
-# Rollout
-# ------------------------------------------------------------------
-
-def rollout(model: SAC, prices: pd.Series, agent_type: AgentType) -> dict:
+ 
+ 
+# ── Regime labeling ────────────────────────────────────────────────
+ 
+def label_regimes(prices, ann=1638):
     """
-    Run a trained model on a price series. Returns a dict with:
-      - returns  : np.ndarray of step returns
-      - equity   : np.ndarray of portfolio value
-      - positions: np.ndarray of position at each step
+    Label each bar low_vol / mid_vol / high_vol using rolling realized vol tertiles.
+    Window is 130 bars (~20 trading days at 1h), annualized with ann factor.
+    Returns np.ndarray aligned to prices[130:].
     """
-    env = TradingEnv(prices, agent_type=agent_type)
+    window = max(20, ann // 13)   # ~20 trading days worth of bars
+    log_r = np.log(prices / prices.shift(1)).dropna()
+    rv    = log_r.rolling(window).std() * np.sqrt(ann)
+    rv    = rv.dropna()
+    q33, q67 = rv.quantile(0.33), rv.quantile(0.67)
+    labels = np.where(rv <= q33, "low_vol",
+             np.where(rv <= q67, "mid_vol", "high_vol"))
+    return labels
+ 
+ 
+def regime_table(r, regimes, ann=1638):
+    """Slice r by regime and compute per-regime metrics."""
+    rows = []
+    for reg in ["low_vol", "mid_vol", "high_vol"]:
+        mask = regimes == reg
+        rs   = r[mask[:len(r)]]
+        if len(rs) < 5:
+            continue
+        eq = np.cumprod(1 + rs)
+        rows.append({
+            "Regime":        reg,
+            "Bars":          int(mask.sum()),
+            "Ann. ret (%)":  round(rs.mean() * ann * 100, 2),
+            "Sharpe":        round(sharpe(rs, ann), 3),
+            "MaxDD (%)":     round(max_drawdown(eq) * 100, 2),
+            "CVaR 95% (%)":  round(cvar_metric(rs) * 100, 3),
+            "Win rate (%)":  round((rs > 0).mean() * 100, 1),
+        })
+    return pd.DataFrame(rows).set_index("Regime")
+ 
+ 
+# ── Rollout ────────────────────────────────────────────────────────
+ 
+def rollout(model, prices, agent_type, bars_per_year=1638, cost_pct=0.0002):
+    env = TradingEnv(prices, agent_type=agent_type,
+                     bars_per_year=bars_per_year, cost_pct=cost_pct)
     obs, _ = env.reset()
-    returns, equity, positions = [], [env.initial_capital], []
-
+    returns, equity, positions = [], [float(env.initial_capital)], []
     done = False
     while not done:
         action, _ = model.predict(obs, deterministic=True)
-        obs, reward, done, _, info = env.step(action)
+        obs, _, done, _, info = env.step(action)
         returns.append(info["net_ret"])
         equity.append(info["equity"])
         positions.append(info["position"])
-
     return {
-        "returns":   np.array(returns, dtype=np.float32),
-        "equity":    np.array(equity,  dtype=np.float32),
+        "returns":   np.array(returns,   dtype=np.float32),
+        "equity":    np.array(equity,    dtype=np.float32),
         "positions": np.array(positions, dtype=np.float32),
     }
-
-
-# ------------------------------------------------------------------
-# Regime labeling
-# ------------------------------------------------------------------
-
-def label_regimes(prices: pd.Series, n_warmup: int = 20) -> pd.Series:
-    """
-    Label each bar as 'low_vol', 'mid_vol', 'high_vol' using
-    realized 20-day vol tertiles on the test set.
-
-    Returns a pd.Series aligned with prices[n_warmup:].
-    """
-    log_rets = np.log(prices / prices.shift(1)).dropna()
-    rv = log_rets.rolling(20).std() * np.sqrt(252)
-    rv = rv.dropna()
-
-    q33 = rv.quantile(0.33)
-    q67 = rv.quantile(0.67)
-
-    def bucket(v):
-        if v <= q33:
-            return "low_vol"
-        elif v <= q67:
-            return "mid_vol"
-        else:
-            return "high_vol"
-
-    return rv.map(bucket)
-
-
-def regime_conditional_metrics(
-    returns: np.ndarray,
-    regimes: np.ndarray,
-) -> pd.DataFrame:
-    """
-    Slice returns by regime label and compute metrics per slice.
-    regimes must be same length as returns.
-    """
-    rows = []
-    for regime in ["low_vol", "mid_vol", "high_vol"]:
-        mask = regimes == regime
-        r = returns[mask]
-        if len(r) < 5:
-            continue
-        eq = np.cumprod(1 + r)
-        rows.append({
-            "Regime": regime,
-            "N bars":          int(mask.sum()),
-            "Ann. return (%)": round(float(np.mean(r) * 252 * 100), 2),
-            "Sharpe":          round(sharpe(r), 3),
-            "Max DD (%)":      round(max_drawdown(eq) * 100, 2),
-        })
-    return pd.DataFrame(rows).set_index("Regime")
-
-
-# ------------------------------------------------------------------
-# Main
-# ------------------------------------------------------------------
-
+ 
+ 
+# ── Buy-and-hold benchmark ────────────────────────────────────────
+ 
+def buy_and_hold(prices):
+    log_r = np.diff(np.log(prices.values)).astype(np.float32)
+    eq    = np.cumprod(1 + log_r)
+    eq    = np.concatenate([[1.0], eq])
+    return {"returns": log_r, "equity": eq,
+            "positions": np.ones(len(log_r), dtype=np.float32)}
+ 
+ 
+# ── Main ───────────────────────────────────────────────────────────
+ 
 def main():
-    parser = argparse.ArgumentParser(description="Phase 0 — Evaluate agents")
-    parser.add_argument("--ticker",   default="SPY",        help="yfinance ticker")
-    parser.add_argument("--start",    default="2023-01-01", help="Test period start")
-    parser.add_argument("--end",      default="2024-12-31", help="Test period end")
-    parser.add_argument("--modeldir", default=".",          help="Directory with models/")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ticker",   default="SPY")
+    parser.add_argument("--start",    default="2025-11-01")
+    parser.add_argument("--end",      default="2026-03-15")
+    parser.add_argument("--interval", default="1h",
+                        choices=list(BARS_PER_YEAR.keys()),
+                        help="Bar interval (default: 1h)")
+    parser.add_argument("--modeldir", default=".")
+    parser.add_argument("--agents",   default=None, nargs="+",
+                        choices=[a.value for a in AgentType],
+                        help="Subset of agents to evaluate (default: all found)")
+    parser.add_argument("--cost_pct", default=0.0002, type=float,
+                        help="One-way transaction cost — must match training value")
     args = parser.parse_args()
+ 
+    ann = BARS_PER_YEAR[args.interval]
 
-    print("\n=== Phase 0: Evaluation ===")
+    print(f"\n=== Phase 0 Evaluation — {args.ticker} "
+          f"({args.start} → {args.end}, interval={args.interval}) ===\n")
 
-    # --- Download test data ---
-    print(f"  Downloading {args.ticker} test data...")
-    df = yf.download(args.ticker, start=args.start, end=args.end, auto_adjust=True, progress=False)
+    # ── Download ──────────────────────────────────────────────────
+    df = yf.download(args.ticker, start=args.start, end=args.end,
+                     interval=args.interval, auto_adjust=True, progress=False)
     prices = df["Close"].squeeze().dropna()
     print(f"  {len(prices)} bars in test set.")
 
-    # --- Regime labels ---
-    regimes_series = label_regimes(prices, n_warmup=20)
-    # Align to env steps (env starts at t=warmup=20, so n_bars-21 steps)
-    regime_arr = regimes_series.values[-len(prices) + 20 + 1:]
-
-    # --- Load & rollout each agent ---
-    results = {}
-    for agent_type in AgentType:
-        name = agent_type.value
-        model_path = os.path.join(args.modeldir, "models", f"{name}_agent", "best_model")
-        if not os.path.exists(model_path + ".zip"):
-            print(f"  [WARN] Model not found: {model_path}.zip — skipping.")
-            continue
-        print(f"  Rolling out: {name}...")
-        model = SAC.load(model_path)
-        results[name] = rollout(model, prices, agent_type)
-
-    if not results:
-        print("  No models found. Train agents first with train_agents.py.")
+    # ── Regime labels ─────────────────────────────────────────────
+    regimes = label_regimes(prices, ann)
+    counts  = {r: (regimes == r).sum() for r in ["low_vol","mid_vol","high_vol"]}
+    print(f"  Regime distribution: {counts}\n")
+ 
+    # ── Determine which agents to evaluate ───────────────────────
+    candidates = (
+        [AgentType(a) for a in args.agents]
+        if args.agents else list(AgentType)
+    )
+    to_eval = []
+    for at in candidates:
+        path = os.path.join(args.modeldir, "models",
+                            f"{at.value}_agent", "best_model.zip")
+        if os.path.exists(path):
+            to_eval.append(at)
+        else:
+            print(f"  [skip] {at.value} — model not found at {path}")
+ 
+    if not to_eval:
+        print("\n  No models found. Run train_agents.py first.")
         return
-
-    # --- Overall metrics table ---
-    print("\n" + "="*65)
-    print("  OVERALL PERFORMANCE (full test period)")
-    print("="*65)
-    rows = {}
+ 
+    # ── Rollout ───────────────────────────────────────────────────
+    results = {}
+    for at in to_eval:
+        path = os.path.join(args.modeldir, "models",
+                            f"{at.value}_agent", "best_model")
+        print(f"  Rolling out: {at.value}...")
+        model = SAC.load(path)
+        results[at.value] = rollout(model, prices, at, ann, args.cost_pct)
+ 
+    # Add buy-and-hold benchmark
+    results["buy_&_hold"] = buy_and_hold(prices)
+    print(f"  Buy-and-hold benchmark added.")
+ 
+    # ── Overall metrics ───────────────────────────────────────────
+    sep = "=" * 80
+    print(f"\n{sep}")
+    print("  OVERALL PERFORMANCE")
+    print(sep)
+    overall = {name: compute_metrics(r["returns"], r["equity"], ann)
+               for name, r in results.items()}
+    df_overall = pd.DataFrame(overall).T
+    print(df_overall.to_string())
+ 
+    """
+    # ── Regime-conditional table ──────────────────────────────────
+    print(f"\n{sep}")
+    print("  REGIME-CONDITIONAL SHARPE  (key thesis table)")
+    print(sep)
+ 
+    # Compact cross-table: rows=agents, cols=regimes
+    reg_rows = {}
     for name, r in results.items():
-        rows[name] = compute_metrics(r["returns"], r["equity"])
-    metrics_df = pd.DataFrame(rows).T
-    print(metrics_df.to_string())
-
-    # --- Regime-conditional table ---
-    print("\n" + "="*65)
-    print("  REGIME-CONDITIONAL PERFORMANCE")
-    print("="*65)
+        ret = r["returns"]
+        reg = regimes[:len(ret)]
+        for regime in ["low_vol", "mid_vol", "high_vol"]:
+            mask = reg == regime
+            rs   = ret[mask]
+            s    = round(sharpe(rs), 3) if len(rs) >= 5 else float("nan")
+            reg_rows.setdefault(name, {})[regime] = s
+    df_regime_sharpe = pd.DataFrame(reg_rows).T
+    df_regime_sharpe.index.name = "agent"
+    print(df_regime_sharpe.to_string())
+ 
+    # Verbose per-agent regime breakdown
+    print(f"\n{sep}")
+    print("  REGIME-CONDITIONAL DETAIL (per agent)")
+    print(sep)
+    all_regime_dfs = {}
     for name, r in results.items():
-        rets = r["returns"]
-        reg  = regime_arr[:len(rets)]  # align lengths
+        ret = r["returns"]
+        reg = regimes[:len(ret)]
+        rt  = regime_table(ret, reg)
+        all_regime_dfs[name] = rt
         print(f"\n  [{name.upper()}]")
-        rcm = regime_conditional_metrics(rets, reg)
-        print(rcm.to_string())
-
-    # --- Position correlation ---
-    print("\n" + "="*65)
+        print(rt.to_string())
+    """
+    # ── Position correlation ──────────────────────────────────────
+    print(f"\n{sep}")
     print("  POSITION CORRELATION MATRIX")
-    print("="*65)
+    print(sep)
     min_len = min(len(r["positions"]) for r in results.values())
-    pos_df = pd.DataFrame(
-        {name: r["positions"][:min_len] for name, r in results.items()}
-    )
+    pos_df  = pd.DataFrame(
+        {n: r["positions"][:min_len] for n, r in results.items()})
     print(pos_df.corr().round(3).to_string())
-
-    # --- Save equity curves ---
+    print("\n  Low correlation = agents genuinely disagree = HLA adds value")
+    
+    # ── Save outputs ──────────────────────────────────────────────
     eq_df = pd.DataFrame(
-        {name: r["equity"][:min_len + 1] for name, r in results.items()}
-    )
-    out_path = os.path.join(args.modeldir, "equity_curves.csv")
-    eq_df.to_csv(out_path, index=False)
-    print(f"\n  Equity curves saved → {out_path}")
-
-    print("\n✓ Evaluation complete.")
-    print("  Key question: which agent performs best in each volatility regime?")
-    print("  That table is the empirical motivation for the Phase 1 hierarchy.")
-
-
+        {n: r["equity"][:min_len + 1] for n, r in results.items()})
+    eq_path = os.path.join(args.modeldir, "equity_curves.csv")
+    eq_df.to_csv(eq_path, index=False)
+ 
+    #reg_path = os.path.join(args.modeldir, "regime_table.csv")
+    #df_regime_sharpe.to_csv(reg_path)
+ 
+    print(f"\n  Saved → {eq_path}")
+    #print(f"  Saved → {reg_path}")
+    
+    """
+    # ── Summary: winner per regime ────────────────────────────────
+    print(f"\n{sep}")
+    print("  WINNER PER REGIME (highest Sharpe)")
+    print(sep)
+    for regime in ["low_vol", "mid_vol", "high_vol"]:
+        col = df_regime_sharpe[regime].dropna()
+        if col.empty:
+            continue
+        winner = col.idxmax()
+        score  = col.max()
+        print(f"  {regime:10s}  →  {winner:20s}  (Sharpe {score:.3f})")
+    """
+    print(f"\n✓ Done. Run plot_results.py --csvpath equity_curves.csv "
+          f"--ticker {args.ticker} --start {args.start} --end {args.end}")
+ 
+ 
 if __name__ == "__main__":
     main()
