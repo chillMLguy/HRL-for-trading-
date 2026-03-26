@@ -1,5 +1,4 @@
 """
-
 Observation space (11 features):
   [0]  ret_5    — ~1-week rolling return  (scaled by bar size)
   [1]  ret_10   — ~2-week rolling return
@@ -13,41 +12,39 @@ Observation space (11 features):
   [9]  drawdown — current drawdown from peak equity
   [10] vol_ratio — vol_10 / vol_20  (vol regime signal)
 
-All lookback windows are multiplied by (bars_per_year // 252) so they
-represent the same calendar duration regardless of bar frequency.
-  daily (252 bars/yr):  scale=1  → windows: 5, 10, 20, 14 bars
-  1-hour (1638 bars/yr): scale=6 → windows: 30, 60, 120, 84 bars
-
 Action space: continuous [-1, 1]
   -1 = full short, 0 = flat, +1 = full long
   Intermediate values = fractional positions
+
+Reward function (unified, parametric):
+  r_t = net_ret / vol_scale  -  λ * (dd_dev + dd_penalty)
+
+  λ controls risk aversion on a smooth spectrum:
+    λ = 0.0  → aggressive   
+    λ = 0.25 → growth   
+    λ = 0.75 → balanced  
+    λ = 1.5  → conservative   
+    λ = 3.0  → ultra-conservative 
 """
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
-from enum import Enum
 
 
-class AgentType(Enum):
-    CONSERVATIVE = "conservative"
-    NEUTRAL      = "neutral"
-    AGGRESSIVE   = "aggressive"
-    CVAR         = "cvar"
-    OMEGA        = "omega"
-    RACHEV       = "rachev"
+# Named presets for convenience (maps name → lambda value)
+AGENT_PRESETS = {
+    "aggressive": 0.0,
+    "growth": 0.25,
+    "balanced": 0.75,
+    "conservative": 1.5,
+    "ultra_conservative": 3.0,
+}
 
 
 def _precompute_features(returns: np.ndarray, bars_per_year: int = 1638) -> dict:
-    """
-    Compute every rolling feature once.
-    Arrays have size n+1 so index t is always valid up to t=n.
-    bars_per_year: 252 for daily, 1638 for 1-hour (252 * 6.5).
-    All lookback windows are scaled by bars_per_year // 252 so they
-    represent the same calendar duration regardless of bar frequency.
-    """
-    n     = len(returns)
-    N     = n + 1
-    ANN   = np.float32(np.sqrt(bars_per_year))
+    n = len(returns)
+    N = n + 1
+    ANN = np.float32(np.sqrt(bars_per_year))
     scale = max(1, bars_per_year // 252)   # 1 for daily, 6 for 1h
 
     w5  = 5  * scale   # ~1 week
@@ -103,21 +100,17 @@ def _precompute_features(returns: np.ndarray, bars_per_year: int = 1638) -> dict
 class TradingEnv(gym.Env):
     """
     Parameters
-    ----------
     prices          : pd.Series or np.ndarray of close prices
-    agent_type      : AgentType enum — selects reward function
+    lam             : float — risk aversion parameter (λ). 0 = aggressive, 3 = ultra-conservative
     bars_per_year   : 252 for daily, 1638 for 1h; drives ANN factor & lookback scaling
     cost_pct        : one-way transaction cost (default 0.02% — realistic for intraday)
     max_hold        : normalisation for time_in_trade feature
     initial_capital : starting equity
-    lambda_drawdown : drawdown penalty weight  (CONSERVATIVE)
-    lambda_vol      : rolling-vol penalty weight (CONSERVATIVE)
-    cvar_alpha      : CVaR confidence level, e.g. 0.95 = worst 5% (CVAR)
-    cvar_beta       : CVaR aversion weight (CVAR)
-    omega_threshold : minimum acceptable return threshold (OMEGA)
-    rachev_alpha    : tail quantile for Rachev ratio (RACHEV)
+    dd_free         : drawdown level below which no penalty applies (default 3%)
+    dd_max          : drawdown level at which episode terminates (default 15%)
     buf_size        : rolling window length for reward statistics
                       (auto-scaled by bar frequency if left at 0)
+    eval_mode       : if True, drawdown does NOT terminate the episode (for full equity curves)
     """
 
     metadata = {"render_modes": []}
@@ -125,23 +118,15 @@ class TradingEnv(gym.Env):
     def __init__(
         self,
         prices,
-        agent_type:      AgentType = AgentType.NEUTRAL,
+        lam:             float = 0.75,
         bars_per_year:   int   = 1638,
-        cost_pct:        float = 0.0002,
+        cost_pct:        float = 0.0001,
         max_hold:        int   = 390,
         initial_capital: float = 1.0,
-        # CONSERVATIVE params
-        lambda_drawdown: float = 0.5,
-        lambda_vol:      float = 0.3,
-        # CVAR params
-        cvar_alpha:      float = 0.95,
-        cvar_beta:       float = 0.1,
-        # OMEGA params
-        omega_threshold: float = 0.0,
-        # RACHEV params
-        rachev_alpha:    float = 0.05,
-        # shared
-        buf_size:        int   = 0,    # 0 = auto (50 trading days worth of bars)
+        dd_free:         float = 0.03,
+        dd_max:          float = 0.15,
+        buf_size:        int   = 0,
+        eval_mode:       bool  = False,
     ):
         super().__init__()
 
@@ -152,22 +137,20 @@ class TradingEnv(gym.Env):
 
         scale = self._feat["_scale"]
 
-        self.agent_type      = agent_type
+        self.lam             = np.float32(lam)
         self.cost_pct        = np.float32(cost_pct)
         self.max_hold        = max_hold
         self.initial_capital = np.float32(initial_capital)
-        self.lambda_dd       = np.float32(lambda_drawdown)
-        self.lambda_vol      = np.float32(lambda_vol)
-        self.cvar_alpha      = cvar_alpha
-        self.cvar_beta       = np.float32(cvar_beta)
-        self.omega_thresh    = np.float32(omega_threshold)
-        self.rachev_alpha    = rachev_alpha
+        self.dd_free         = np.float32(dd_free)
+        self.dd_max          = np.float32(dd_max)
+        self.dd_range        = np.float32(dd_max - dd_free)
+        self.eval_mode       = eval_mode
         self.warmup          = 20 * scale   # ~1 month of bars to warm up features
 
         _buf_size = buf_size if buf_size > 0 else 50 * scale  # ~50 trading days
         self.buf_size = _buf_size
 
-        # Ring buffer — large enough for CVaR/Omega/Rachev windows
+        # Ring buffer stores vol-normalized returns
         self._rbuf   = np.zeros(_buf_size, dtype=np.float32)
         self._rbuf_i = 0
         self._rbuf_n = 0
@@ -177,15 +160,6 @@ class TradingEnv(gym.Env):
         self.action_space = spaces.Box(
             low=np.float32(-1.0), high=np.float32(1.0),
             shape=(1,), dtype=np.float32)
-
-        self._reward_fn = {
-            AgentType.CONSERVATIVE: self._reward_conservative,
-            AgentType.NEUTRAL:      self._reward_neutral,
-            AgentType.AGGRESSIVE:   self._reward_aggressive,
-            AgentType.CVAR:         self._reward_cvar,
-            AgentType.OMEGA:        self._reward_omega,
-            AgentType.RACHEV:       self._reward_rachev,
-        }[agent_type]
 
         self.t = self.position = self.equity = None
         self.peak_equity = self.trade_start = None
@@ -216,14 +190,15 @@ class TradingEnv(gym.Env):
         self.peak_equity  = max(self.peak_equity, self.equity)
         self.position     = action
 
-        self._rbuf[self._rbuf_i] = net_ret
-        self._rbuf_i = (self._rbuf_i + 1) % self.buf_size
-        self._rbuf_n = min(self._rbuf_n + 1, self.buf_size)
-
-        reward = self._reward_fn(net_ret)
+        # Compute reward (includes ring buffer update)
+        reward, dd_terminated = self._compute_reward(net_ret)
 
         self.t += 1
         done = self.t >= self.n_bars - 1
+
+        # Hard drawdown termination (training only)
+        if dd_terminated and not self.eval_mode:
+            done = True
 
         if abs(self.position) < np.float32(0.01):
             self.trade_start = self.t
@@ -233,88 +208,60 @@ class TradingEnv(gym.Env):
             "position": float(self.position),
             "net_ret":  float(net_ret),
             "drawdown": float(self._current_drawdown()),
+            "lam":      float(self.lam),
         }
+        if dd_terminated:
+            info["terminated_by"] = "drawdown"
+
         return self._get_obs(), float(reward), done, False, info
 
-    # ── Reward functions ───────────────────────────────────────────
+    # ── Unified reward function ────────────────────────────────────
+
+    def _compute_reward(self, net_ret):
+        """
+        r_t = net_ret / vol_scale  -  λ * (dd_dev + dd_penalty)
+
+        Returns (reward, dd_terminated) where dd_terminated is True if
+        drawdown exceeded dd_max.
+        """
+        # 1. Vol-scale normalization
+        vol_scale = max(self._feat["vol_20"][self.t], np.float32(1e-6))
+        norm_ret  = np.float32(net_ret / vol_scale)
+
+        # 2. Store vol-normalized return in ring buffer
+        self._rbuf[self._rbuf_i] = norm_ret
+        self._rbuf_i = (self._rbuf_i + 1) % self.buf_size
+        self._rbuf_n = min(self._rbuf_n + 1, self.buf_size)
+
+        # 3. Downside deviation (Component A)
+        buf = self._buf()
+        negative_returns = buf[buf < 0]
+        dd_dev = np.float32(negative_returns.std()) \
+            if len(negative_returns) >= 2 else np.float32(0.0)
+
+        # 4. Quadratic drawdown penalty with zones (Component B)
+        dd = self._current_drawdown()
+        dd_terminated = False
+
+        if dd < self.dd_free:
+            dd_penalty = np.float32(0.0)
+        elif dd < self.dd_max:
+            dd_penalty = np.float32(
+                ((dd - self.dd_free) / self.dd_range) ** 2)
+        else:
+            dd_terminated = True
+            dd_penalty = np.float32(1.0)
+
+        # 5. Combined reward
+        penalty = dd_dev + dd_penalty
+        reward  = float(norm_ret - self.lam * penalty)
+
+        return reward, dd_terminated
 
     def _buf(self):
         """Return valid portion of the ring buffer as a numpy array."""
         return self._rbuf if self._rbuf_n == self.buf_size \
                else self._rbuf[:self._rbuf_n]
-
-    def _reward_conservative(self, net_ret):
-        """
-            r = net_ret - λ_dd·drawdown - λ_vol·std(recent_returns)
-        """
-        dd  = self._current_drawdown()
-        rv  = self._buf().std() if self._rbuf_n >= 2 else np.float32(0.0)
-        return float(net_ret
-                     - self.lambda_dd  * max(np.float32(0.0), dd)
-                     - self.lambda_vol * rv)
-
-    def _reward_neutral(self, net_ret):
-        """
-            r = net_ret - 0.3·std(negative returns only)
-        """
-        neg = self._buf()
-        neg = neg[neg < 0]
-        ds  = neg.std() if len(neg) >= 2 else np.float32(0.0)
-        return float(net_ret - np.float32(0.3) * ds)
-
-    def _reward_aggressive(self, net_ret):
-        """
-            r = net_ret + 0.1·sign(net_ret)·|ret_5|
-        """
-        ret_5 = self._feat["ret_5"][self.t]
-        return float(net_ret + np.float32(0.1) * np.sign(net_ret) * abs(ret_5))
-
-    def _reward_cvar(self, net_ret):
-
-        buf = self._buf()
-        if self._rbuf_n < 20:
-            return float(net_ret)
-
-        var_threshold = np.percentile(buf, (1.0 - self.cvar_alpha) * 100.0)
-        tail          = buf[buf <= var_threshold]
-        cvar          = tail.mean() if len(tail) > 0 else np.float32(0.0)
-
-        return float(net_ret - self.cvar_beta * abs(cvar))
-
-    def _reward_omega(self, net_ret):
-        buf = self._buf()
-        if self._rbuf_n < 10:
-            return float(net_ret)
-
-        excess = buf - self.omega_thresh
-        gains  = excess[excess > 0].sum()
-        losses = (-excess[excess < 0]).sum()
-
-        if losses < 1e-10:
-            omega = np.float32(2.0)   # cap — avoid division by zero
-        else:
-            omega = np.float32(gains / losses)
-
-        return float(net_ret + np.float32(0.05) * (omega - np.float32(1.0)))
-
-    def _reward_rachev(self, net_ret):
-
-        buf = self._buf()
-        if self._rbuf_n < 20:
-            return float(net_ret)
-
-        q_lo = np.percentile(buf, self.rachev_alpha * 100.0)
-        q_hi = np.percentile(buf, (1.0 - self.rachev_alpha) * 100.0)
-
-        up_tail   = buf[buf >= q_hi]
-        down_tail = buf[buf <= q_lo]
-
-        etl_up   = up_tail.mean()   if len(up_tail)   > 0 else np.float32(0.0)
-        etl_down = abs(down_tail.mean()) if len(down_tail) > 0 else np.float32(1e-8)
-
-        rachev = np.float32(etl_up / max(etl_down, np.float32(1e-8)))
-
-        return float(net_ret + np.float32(0.05) * (rachev - np.float32(1.0)))
 
     # ── Observation ────────────────────────────────────────────────
 

@@ -13,13 +13,12 @@ import matplotlib.cm as cm
 # ── Auto colour palette — works for any number of agents ──────────
 
 _FIXED = {
-    "conservative": "#1d7874",
-    "neutral":      "#4a6fa5",
-    "aggressive":   "#c75146",
-    "cvar":         "#9b59b6",
-    "omega":        "#e67e22",
-    "rachev":       "#2ecc71",
-    "buy_&_hold":   "#888888",
+    "aggressive":        "#c75146",   # red
+    "growth":            "#e67e22",   # orange
+    "balanced":          "#4a6fa5",   # blue
+    "conservative":      "#1d7874",   # teal
+    "ultra_conservative": "#9b59b6",  # purple
+    "buy_&_hold":        "#888888",   # gray
 }
 _TAB10 = plt.get_cmap("tab10").colors
 
@@ -60,9 +59,10 @@ def drawdown_series(s):
     return (s - peak) / peak * 100
 
 
-def rollout_positions(model, prices, agent_type, bars_per_year=1638):
+def rollout_positions(model, prices, lam, bars_per_year=1638):
     from env.trading_env import TradingEnv
-    env = TradingEnv(prices, agent_type=agent_type, bars_per_year=bars_per_year)
+    env = TradingEnv(prices, lam=lam, bars_per_year=bars_per_year,
+                     eval_mode=True)
     obs, _ = env.reset()
     warmup = env.warmup
     positions = []
@@ -200,7 +200,7 @@ def main():
     ax4.legend(framealpha=0.2, fontsize=8)
     ax4.grid(True)
 
-    fig1.suptitle("Phase 0 — Agent Comparison", fontsize=11, y=0.98, color="#e0e4ef")
+    fig1.suptitle("Phase 0 — λ-Spectrum Agent Comparison", fontsize=11, y=0.98, color="#e0e4ef")
     plt.savefig("phase0_results.png", dpi=150, bbox_inches="tight", facecolor="#0e1117")
     print("Saved → phase0_results.png")
 
@@ -209,7 +209,7 @@ def main():
         try:
             import yfinance as yf
             from stable_baselines3 import SAC
-            from env.trading_env import AgentType
+            from env.trading_env import AGENT_PRESETS
         except ImportError as e:
             print(f"  [WARN] {e}")
             plt.show()
@@ -248,11 +248,11 @@ def main():
 
         for ax, name in zip(axes, signal_agents):
             try:
-                at    = AgentType(name)
+                lam   = AGENT_PRESETS[name]
                 model = SAC.load(os.path.join(
                     args.modeldir, "models", f"{name}_agent", "best_model"))
-                print(f"  Rolling out {name}...")
-                pos, warmup = rollout_positions(model, prices, at, bars_per_year)
+                print(f"  Rolling out {name} (λ={lam})...")
+                pos, warmup = rollout_positions(model, prices, lam, bars_per_year)
                 px_plot = prices.values[warmup:]
                 plot_signals_panel(ax, px_plot, pos, name, colors[name])
             except Exception as e:

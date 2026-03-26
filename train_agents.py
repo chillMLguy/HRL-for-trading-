@@ -1,4 +1,3 @@
-
 import argparse
 import os
 import warnings
@@ -14,7 +13,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.monitor import Monitor
 
-from env.trading_env import TradingEnv, AgentType
+from env.trading_env import TradingEnv, AGENT_PRESETS
 
 
 BARS_PER_YEAR = {"1d": 252, "1h": 1638, "30m": 3276, "15m": 6552}
@@ -34,9 +33,9 @@ def train_split(prices, ratio=0.8):
     return prices.iloc[:split], prices.iloc[split:]
 
 
-def make_env(prices, agent_type, bars_per_year=1638, cost_pct=0.0002):
+def make_env(prices, lam, bars_per_year=1638, cost_pct=0.0002):
     def _init():
-        return Monitor(TradingEnv(prices, agent_type=agent_type,
+        return Monitor(TradingEnv(prices, lam=lam,
                                   bars_per_year=bars_per_year,
                                   cost_pct=cost_pct))
     return DummyVecEnv([_init])
@@ -45,16 +44,15 @@ def make_env(prices, agent_type, bars_per_year=1638, cost_pct=0.0002):
 def _train_worker(args):
     """
     Top-level function (required for multiprocessing pickle).
-    Runs one agent training to completion and returns the model path.
+    Runs one agent training to completion and returns the agent name.
     """
-    (agent_name, train_prices, eval_prices,
+    (agent_name, lam, train_prices, eval_prices,
      outdir, seed, timesteps, net_arch, bars_per_year, cost_pct) = args
 
     warnings.filterwarnings("ignore")
-    agent_type = AgentType(agent_name)
 
-    train_env = make_env(train_prices, agent_type, bars_per_year, cost_pct)
-    eval_env  = make_env(eval_prices,  agent_type, bars_per_year, cost_pct)
+    train_env = make_env(train_prices, lam, bars_per_year, cost_pct)
+    eval_env  = make_env(eval_prices,  lam, bars_per_year, cost_pct)
 
     model_dir = os.path.join(outdir, "models", f"{agent_name}_agent")
     log_dir   = os.path.join(outdir, "logs",   f"{agent_name}_agent")
@@ -66,7 +64,7 @@ def _train_worker(args):
         best_model_save_path=model_dir,
         log_path=log_dir,
         eval_freq=max(timesteps // 20, 1000),  # evaluate 20 times total
-        n_eval_episodes=1,                      # was 5 — saves 80% eval time
+        n_eval_episodes=1,                      # saves 80% eval time
         deterministic=True,
         verbose=0,
     )
@@ -89,7 +87,7 @@ def _train_worker(args):
     model.learn(total_timesteps=timesteps, callback=eval_cb,
                 progress_bar=True)
     model.save(os.path.join(model_dir, "final_model"))
-    print(f"  [{agent_name}] done.")
+    print(f"  [{agent_name}] (λ={lam}) done.")
     return agent_name
 
 
@@ -108,12 +106,12 @@ def main():
                         help="50k steps, [64,64] net — full loop in ~5 min")
     parser.add_argument("--full",    action="store_true",
                         help="500k steps, [256,256] net — original quality")
-    parser.add_argument("--workers", default=3, type=int,
-                        help="Parallel processes (default=3, one per agent)")
+    parser.add_argument("--workers", default=5, type=int,
+                        help="Parallel processes (default=5, one per agent)")
     parser.add_argument("--agents", default=None, nargs="+",
-                        choices=[a.value for a in AgentType],
+                        choices=list(AGENT_PRESETS.keys()),
                         help="Which agents to train (default: all). "
-                             "e.g. --agents aggressive cvar rachev")
+                             "e.g. --agents aggressive balanced conservative")
     parser.add_argument("--cost_pct", default=0.0002, type=float,
                         help="One-way transaction cost fraction "
                              "(default 0.0002 = 0.02%% for intraday). "
@@ -135,7 +133,11 @@ def main():
 
     bars_per_year = BARS_PER_YEAR[args.interval]
 
-    print(f"\n=== Phase 0: Baseline Flat Agents ===")
+    # Select agents
+    selected_names = args.agents if args.agents else list(AGENT_PRESETS.keys())
+    selected = [(name, AGENT_PRESETS[name]) for name in selected_names]
+
+    print(f"\n=== Phase 0: λ-Spectrum Baseline Agents ===")
     print(f"  Ticker   : {args.ticker}")
     print(f"  Interval : {args.interval}  ({bars_per_year} bars/year)")
     print(f"  Period   : {args.start} → {args.end}")
@@ -148,21 +150,19 @@ def main():
     train_prices, eval_prices = train_split(prices)
     print(f"  Train: {len(train_prices)} bars | Eval: {len(eval_prices)} bars\n")
 
-    selected = (
-        [AgentType(a) for a in args.agents]
-        if args.agents else list(AgentType)
-    )
-    print(f"  Agents  : {[a.value for a in selected]}")
+    print(f"  Agents:")
+    for name, lam in selected:
+        print(f"    {name:22s}  λ = {lam}")
 
     worker_args = [
-        (agent.value, train_prices, eval_prices,
+        (name, lam, train_prices, eval_prices,
          args.outdir, args.seed + i, timesteps, net_arch, bars_per_year,
          args.cost_pct)
-        for i, agent in enumerate(selected)
+        for i, (name, lam) in enumerate(selected)
     ]
 
     # Spawn one process per agent — they run truly in parallel
-    n_workers = min(args.workers, len(AgentType))
+    n_workers = min(args.workers, len(selected))
     if n_workers > 1:
         # 'spawn' context avoids macOS fork issues with numpy/torch
         ctx = mp.get_context("spawn")
