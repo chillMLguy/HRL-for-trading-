@@ -2,7 +2,6 @@ import argparse
 import os
 import warnings
 warnings.filterwarnings("ignore")
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -10,7 +9,6 @@ import matplotlib.gridspec as gridspec
 import matplotlib.patches as mpatches
 import matplotlib.cm as cm
 
-# ── Auto colour palette — works for any number of agents ──────────
 
 _FIXED = {
     "aggressive":        "#c75146",   # red
@@ -46,11 +44,10 @@ plt.rcParams.update({
 })
 
 
-# ── Helpers ────────────────────────────────────────────────────────
+
 
 def load_equity(path):
     df = pd.read_csv(path)
-    # Normalize all columns to 100 at start
     return df / df.iloc[0] * 100
 
 
@@ -59,10 +56,11 @@ def drawdown_series(s):
     return (s - peak) / peak * 100
 
 
-def rollout_positions(model, prices, lam, bars_per_year=1638):
+def rollout_positions(model, prices, lam, bars_per_year=1638,
+                      cnn_model_path=None):
     from env.trading_env import TradingEnv
     env = TradingEnv(prices, lam=lam, bars_per_year=bars_per_year,
-                     eval_mode=True)
+                     eval_mode=True, cnn_model_path=cnn_model_path)
     obs, _ = env.reset()
     warmup = env.warmup
     positions = []
@@ -124,7 +122,6 @@ def plot_signals_panel(ax, px, pos, name, color):
     ax.grid(True, alpha=0.4)
 
 
-# ── Main ───────────────────────────────────────────────────────────
 
 def main():
     BARS_PER_YEAR = {"1d": 252, "1h": 1638, "30m": 3276, "15m": 6552}
@@ -137,21 +134,33 @@ def main():
     parser.add_argument("--interval", default="1h",
                         choices=list(BARS_PER_YEAR.keys()))
     parser.add_argument("--modeldir", default=".")
+    parser.add_argument("--no_cnn", action="store_true",
+                        help="Disable CNN features even if model exists")
     args = parser.parse_args()
 
     bars_per_year = BARS_PER_YEAR[args.interval]
+
+
+    cnn_model_path = None
+    if not args.no_cnn:
+        cnn_path = os.path.join(args.modeldir, "models", "cnn_features",
+                                "cnn_model.pt")
+        if os.path.exists(cnn_path):
+            cnn_model_path = cnn_path
 
     df     = load_equity(args.csvpath)
     agents = list(df.columns)
     colors = {n: agent_color(n, i) for i, n in enumerate(agents)}
 
     print(f"  Plotting {len(agents)} agents: {agents}")
+    if cnn_model_path:
+        print(f"  CNN features: enabled")
 
-    # ── Figure 1: performance overview ────────────────────────────
+
     fig1 = plt.figure(figsize=(14, 10), facecolor="#0e1117")
     gs   = gridspec.GridSpec(3, 2, figure=fig1, hspace=0.45, wspace=0.32)
 
-    # Equity curves
+
     ax1 = fig1.add_subplot(gs[0, :])
     ax1.set_title("Equity curves (indexed to 100)")
     for name in agents:
@@ -163,7 +172,7 @@ def main():
     ax1.legend(loc="upper left", framealpha=0.2, fontsize=8)
     ax1.grid(True)
 
-    # Drawdown
+
     ax2 = fig1.add_subplot(gs[1, :])
     ax2.set_title("Drawdown (%)")
     for name in agents:
@@ -173,8 +182,8 @@ def main():
     ax2.legend(loc="lower left", framealpha=0.2, fontsize=8)
     ax2.grid(True)
 
-    # Rolling Sharpe — window and annualisation scaled to bar frequency
-    roll_window = max(10, bars_per_year // 13)   # ~20 trading days
+
+    roll_window = max(10, bars_per_year // 13)  
     ax3 = fig1.add_subplot(gs[2, 0])
     ax3.set_title(f"Rolling Sharpe ({roll_window}-bar)")
     for name in agents:
@@ -187,7 +196,7 @@ def main():
     ax3.legend(framealpha=0.2, fontsize=8)
     ax3.grid(True)
 
-    # Return distribution
+
     ax4 = fig1.add_subplot(gs[2, 1])
     ax4.set_title("Bar return distribution")
     for name in agents:
@@ -200,11 +209,11 @@ def main():
     ax4.legend(framealpha=0.2, fontsize=8)
     ax4.grid(True)
 
-    fig1.suptitle("Phase 0 — λ-Spectrum Agent Comparison", fontsize=11, y=0.98, color="#e0e4ef")
-    plt.savefig("phase0_results.png", dpi=150, bbox_inches="tight", facecolor="#0e1117")
-    print("Saved → phase0_results.png")
+    fig1.suptitle("λ-Spectrum Agent Comparison", fontsize=11, y=0.98, color="#e0e4ef")
+    plt.savefig("results.png", dpi=150, bbox_inches="tight", facecolor="#0e1117")
+    print("Saved → results.png")
 
-    # ── Figure 2: trade signals (optional) ────────────────────────
+
     if args.ticker:
         try:
             import yfinance as yf
@@ -221,7 +230,6 @@ def main():
                              auto_adjust=True, progress=False)
         prices = raw["Close"].squeeze().dropna()
 
-        # Only plot agents that have a model saved (skip buy_&_hold)
         signal_agents = []
         for name in agents:
             if name == "buy_&_hold":
@@ -252,7 +260,8 @@ def main():
                 model = SAC.load(os.path.join(
                     args.modeldir, "models", f"{name}_agent", "best_model"))
                 print(f"  Rolling out {name} (λ={lam})...")
-                pos, warmup = rollout_positions(model, prices, lam, bars_per_year)
+                pos, warmup = rollout_positions(
+                    model, prices, lam, bars_per_year, cnn_model_path)
                 px_plot = prices.values[warmup:]
                 plot_signals_panel(ax, px_plot, pos, name, colors[name])
             except Exception as e:
@@ -265,9 +274,9 @@ def main():
             fontsize=9, y=1.005, color="#e0e4ef"
         )
         fig2.tight_layout()
-        plt.savefig("phase0_signals.png", dpi=150,
+        plt.savefig("signals.png", dpi=150,
                     bbox_inches="tight", facecolor="#0e1117")
-        print("Saved → phase0_signals.png")
+        print("Saved → signals.png")
 
     plt.show()
 

@@ -1,4 +1,3 @@
-
 import argparse
 import os
 import warnings
@@ -100,10 +99,12 @@ def regime_table(r, regimes, ann=1638):
 
 # ── Rollout ────────────────────────────────────────────────────────
 
-def rollout(model, prices, lam, bars_per_year=1638, cost_pct=0.0002):
+def rollout(model, prices, lam, bars_per_year=1638, cost_pct=0.0002,
+            cnn_model_path=None):
     env = TradingEnv(prices, lam=lam,
                      bars_per_year=bars_per_year, cost_pct=cost_pct,
-                     eval_mode=True)   # no hard DD termination during eval
+                     eval_mode=True,
+                     cnn_model_path=cnn_model_path)
     obs, _ = env.reset()
     returns, equity, positions = [], [float(env.initial_capital)], []
     done = False
@@ -146,12 +147,23 @@ def main():
                         help="Subset of agents to evaluate (default: all found)")
     parser.add_argument("--cost_pct", default=0.0002, type=float,
                         help="One-way transaction cost — must match training value")
+    parser.add_argument("--no_cnn", action="store_true",
+                        help="Disable CNN features even if model exists")
     args = parser.parse_args()
 
     ann = BARS_PER_YEAR[args.interval]
 
-    print(f"\n=== Phase 0 Evaluation — {args.ticker} "
-          f"({args.start} → {args.end}, interval={args.interval}) ===\n")
+    # Auto-detect CNN model
+    cnn_model_path = None
+    if not args.no_cnn:
+        cnn_path = os.path.join(args.modeldir, "models", "cnn_features",
+                                "cnn_model.pt")
+        if os.path.exists(cnn_path):
+            cnn_model_path = cnn_path
+
+    print(f"\n=== Evaluation — {args.ticker} "
+          f"({args.start} → {args.end}, interval={args.interval}) ===")
+    print(f"  CNN features: {'enabled' if cnn_model_path else 'disabled'}\n")
 
     # ── Download ──────────────────────────────────────────────────
     df = yf.download(args.ticker, start=args.start, end=args.end,
@@ -187,7 +199,8 @@ def main():
                             f"{name}_agent", "best_model")
         print(f"  Rolling out: {name} (λ={lam})...")
         model = SAC.load(path)
-        results[name] = rollout(model, prices, lam, ann, args.cost_pct)
+        results[name] = rollout(model, prices, lam, ann, args.cost_pct,
+                                cnn_model_path)
 
     # Add buy-and-hold benchmark
     results["buy_&_hold"] = buy_and_hold(prices)

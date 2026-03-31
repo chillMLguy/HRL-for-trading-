@@ -33,11 +33,13 @@ def train_split(prices, ratio=0.8):
     return prices.iloc[:split], prices.iloc[split:]
 
 
-def make_env(prices, lam, bars_per_year=1638, cost_pct=0.0002):
+def make_env(prices, lam, bars_per_year=1638, cost_pct=0.0002,
+             cnn_model_path=None):
     def _init():
         return Monitor(TradingEnv(prices, lam=lam,
                                   bars_per_year=bars_per_year,
-                                  cost_pct=cost_pct))
+                                  cost_pct=cost_pct,
+                                  cnn_model_path=cnn_model_path))
     return DummyVecEnv([_init])
 
 
@@ -47,12 +49,15 @@ def _train_worker(args):
     Runs one agent training to completion and returns the agent name.
     """
     (agent_name, lam, train_prices, eval_prices,
-     outdir, seed, timesteps, net_arch, bars_per_year, cost_pct) = args
+     outdir, seed, timesteps, net_arch, bars_per_year, cost_pct,
+     cnn_model_path) = args
 
     warnings.filterwarnings("ignore")
 
-    train_env = make_env(train_prices, lam, bars_per_year, cost_pct)
-    eval_env  = make_env(eval_prices,  lam, bars_per_year, cost_pct)
+    train_env = make_env(train_prices, lam, bars_per_year, cost_pct,
+                         cnn_model_path)
+    eval_env  = make_env(eval_prices,  lam, bars_per_year, cost_pct,
+                         cnn_model_path)
 
     model_dir = os.path.join(outdir, "models", f"{agent_name}_agent")
     log_dir   = os.path.join(outdir, "logs",   f"{agent_name}_agent")
@@ -116,6 +121,8 @@ def main():
                         help="One-way transaction cost fraction "
                              "(default 0.0002 = 0.02%% for intraday). "
                              "Use 0.001 for daily/conservative estimate.")
+    parser.add_argument("--no_cnn", action="store_true",
+                        help="Disable CNN features even if model exists")
     args = parser.parse_args()
 
     if args.quick:
@@ -133,6 +140,18 @@ def main():
 
     bars_per_year = BARS_PER_YEAR[args.interval]
 
+    # Auto-detect CNN model
+    cnn_model_path = None
+    if not args.no_cnn:
+        cnn_path = os.path.join(args.outdir, "models", "cnn_features",
+                                "cnn_model.pt")
+        if os.path.exists(cnn_path):
+            cnn_model_path = cnn_path
+            print(f"  CNN model found: {cnn_path}")
+        else:
+            print(f"  CNN model not found — CNN features disabled. "
+                  f"Run pretrain_cnn.py first to enable.")
+
     # Select agents
     selected_names = args.agents if args.agents else list(AGENT_PRESETS.keys())
     selected = [(name, AGENT_PRESETS[name]) for name in selected_names]
@@ -145,6 +164,8 @@ def main():
     print(f"  Steps    : {timesteps:,} per agent")
     print(f"  Network  : {net_arch}")
     print(f"  Workers  : {args.workers} (parallel)")
+    print(f"  CNN feats: {'enabled' if cnn_model_path else 'disabled'}")
+    print(f"  Obs space: 20 features")
 
     prices = download_data(args.ticker, args.start, args.end, args.interval)
     train_prices, eval_prices = train_split(prices)
@@ -157,14 +178,12 @@ def main():
     worker_args = [
         (name, lam, train_prices, eval_prices,
          args.outdir, args.seed + i, timesteps, net_arch, bars_per_year,
-         args.cost_pct)
+         args.cost_pct, cnn_model_path)
         for i, (name, lam) in enumerate(selected)
     ]
 
-    # Spawn one process per agent — they run truly in parallel
     n_workers = min(args.workers, len(selected))
     if n_workers > 1:
-        # 'spawn' context avoids macOS fork issues with numpy/torch
         ctx = mp.get_context("spawn")
         with ctx.Pool(processes=n_workers) as pool:
             pool.map(_train_worker, worker_args)
