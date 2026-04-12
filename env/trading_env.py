@@ -191,7 +191,7 @@ def _precompute_features(returns: np.ndarray,
         vol_ratio = np.where(vol_20 > 1e-8, vol_10 / vol_20,
                              np.float32(1.0))
 
-    # ── Axis E: CNN features (optional) ──────────────────────────
+    # ── Axis E: CNN features ──────────────────────────
     cnn_feat_0 = np.zeros(N, dtype=np.float32)
     cnn_feat_1 = np.zeros(N, dtype=np.float32)
     cnn_feat_2 = np.zeros(N, dtype=np.float32)
@@ -295,7 +295,7 @@ class TradingEnv(gym.Env):
         prices,
         lam:             float = 0.75,
         bars_per_year:   int   = 1638,
-        cost_pct:        float = 0.0001,
+        cost_pct:        float = 0.0002,
         max_hold:        int   = 390,
         initial_capital: float = 1.0,
         dd_free:         float = 0.03,
@@ -322,9 +322,9 @@ class TradingEnv(gym.Env):
         self.dd_max          = np.float32(dd_max)
         self.dd_range        = np.float32(dd_max - dd_free)
         self.eval_mode       = eval_mode
-        self.warmup          = 60 * scale   # ~3 months of bars (longest lookback)
+        self.warmup          = 60 * scale   
 
-        _buf_size = buf_size if buf_size > 0 else 50 * scale  # ~50 trading days
+        _buf_size = buf_size if buf_size > 0 else 50 * scale 
         self.buf_size = _buf_size
 
         # Ring buffer stores vol-normalized returns
@@ -396,25 +396,29 @@ class TradingEnv(gym.Env):
 
     def _compute_reward(self, net_ret):
         """
-        r_t = net_ret / vol_scale  -  λ * (dd_dev + dd_penalty)
+          r_t = net_ret / downside_dev  -  λ * (dd_dev + dd_penalty)
 
         Returns (reward, dd_terminated) where dd_terminated is True if
         drawdown exceeded dd_max.
         """
-        # 1. Vol-scale normalization
-        vol_scale = max(self._feat["vol_20"][self.t], np.float32(1e-6))
-        norm_ret  = np.float32(net_ret / vol_scale)
-
-        # 2. Store vol-normalized return in ring buffer
-        self._rbuf[self._rbuf_i] = norm_ret
+        # 1. Store raw return in ring buffer
+        self._rbuf[self._rbuf_i] = np.float32(net_ret)
         self._rbuf_i = (self._rbuf_i + 1) % self.buf_size
         self._rbuf_n = min(self._rbuf_n + 1, self.buf_size)
 
-        # 3. Downside deviation (Component A)
+        # 2. Downside deviation from buffer (shared by Sortino scale + penalty)
         buf = self._buf()
         negative_returns = buf[buf < 0]
         dd_dev = np.float32(negative_returns.std()) \
             if len(negative_returns) >= 2 else np.float32(0.0)
+
+        # 3. Sortino-style scaling: divide return by downside deviation
+        #    Falls back to vol_20 when not enough history to estimate dd_dev.
+        if dd_dev > np.float32(1e-6):
+            sortino_scale = dd_dev
+        else:
+            sortino_scale = max(self._feat["vol_20"][self.t], np.float32(1e-6))
+        norm_ret = np.float32(net_ret / sortino_scale)
 
         # 4. Quadratic drawdown penalty with zones (Component B)
         dd = self._current_drawdown()

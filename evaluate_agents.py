@@ -218,7 +218,7 @@ def main():
 
     # ── Regime-conditional table ──────────────────────────────────
     print(f"\n{sep}")
-    print("  REGIME-CONDITIONAL SHARPE  (key thesis table)")
+    print("  REGIME-CONDITIONAL SHARPE")
     print(sep)
 
     # Compact cross-table: rows=agents, cols=regimes
@@ -286,7 +286,6 @@ def main():
 
     print(f"\n✓ Done. Run plot_results.py --csvpath equity_curves.csv "
           f"--ticker {args.ticker} --start {args.start} --end {args.end}")
-
 
 if __name__ == "__main__":
     main()

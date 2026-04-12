@@ -101,10 +101,8 @@ def main():
     parser.add_argument("--ticker",   default="SPY")
     parser.add_argument("--start",    default="2024-04-01")
     parser.add_argument("--end",      default="2025-10-31")
-    parser.add_argument("--interval", default="1h",
-                        choices=list(BARS_PER_YEAR.keys()),
-                        help="Bar interval (default: 1h). Note: yfinance limits "
-                             "intraday history to ~730 days.")
+    parser.add_argument("--interval", default="1d",
+                        choices=list(BARS_PER_YEAR.keys()))
     parser.add_argument("--outdir",  default=".")
     parser.add_argument("--seed",    default=42, type=int)
     parser.add_argument("--quick",   action="store_true",
@@ -119,7 +117,7 @@ def main():
                              "e.g. --agents aggressive balanced conservative")
     parser.add_argument("--cost_pct", default=0.0002, type=float,
                         help="One-way transaction cost fraction "
-                             "(default 0.0002 = 0.02%% for intraday). "
+                             "(default 0.0002 = 0.02% for intraday). "
                              "Use 0.001 for daily/conservative estimate.")
     parser.add_argument("--no_cnn", action="store_true",
                         help="Disable CNN features even if model exists")
@@ -192,8 +190,5 @@ def main():
             _train_worker(wa)
 
     print("\n✓ All agents trained.")
-    print("  Run: python evaluate_agents.py --ticker", args.ticker)
-
-
 if __name__ == "__main__":
     main()

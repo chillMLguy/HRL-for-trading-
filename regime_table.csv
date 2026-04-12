@@ -1,7 +1,7 @@
 agent,low_vol,mid_vol,high_vol
-aggressive,0.291,-0.1,-1.323
-growth,0.178,-0.507,0.446
-balanced,0.612,-0.932,1.594
-conservative,1.277,1.145,0.234
-ultra_conservative,1.404,0.74,0.731
-buy_&_hold,0.97,0.934,0.355
+aggressive,0.055,-1.155,-1.617
+growth,-0.155,-1.073,-0.311
+balanced,0.561,-1.009,-1.988
+conservative,0.665,-2.41,0.451
+ultra_conservative,0.796,-1.308,-0.394
+buy_&_hold,2.872,2.4,-0.797
