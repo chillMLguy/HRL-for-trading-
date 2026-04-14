@@ -2,23 +2,23 @@
 Observation space (20 features):
 
   MARKET — Momentum:
-  [0]  ret_5         — ~1-week rolling return  (scaled by bar size)
+  [0]  ret_5         — ~1-week rolling return  
   [1]  ret_10        — ~2-week rolling return
   [2]  ret_20        — ~1-month rolling return
-  [3]  ret_60        — ~3-month rolling return                  (NEW — Axis D)
+  [3]  ret_60        — ~3-month rolling return            
 
   MARKET — Volatility:
   [4]  vol_10        — ~2-week realized volatility (annualized)
   [5]  vol_20        — ~1-month realized volatility (annualized)
-  [6]  vol_60        — ~3-month realized volatility (annualized) (NEW — Axis D)
+  [6]  vol_60        — ~3-month realized volatility (annualized) (
   [7]  vol_ratio     — vol_10 / vol_20  (vol regime signal)
 
   MARKET — Higher-order statistics:
   [8]  rsi_14        — RSI(~14 days), scaled to [-1, 1]
-  [9]  skew_20       — rolling skewness over ~1 month            (NEW — Axis A)
-  [10] kurt_20       — rolling excess kurtosis, clipped [-2, 10] (NEW — Axis A)
-  [11] zscore_20     — price z-score over ~1 month, clipped [-4, 4] (NEW — Axis B)
-  [12] autocorr_20   — rolling lag-1 autocorrelation ~1 month    (NEW — Axis C)
+  [9]  skew_20       — rolling skewness over ~1 month          
+  [10] kurt_20       — rolling excess kurtosis, clipped [-2, 10]
+  [11] zscore_20     — price z-score over ~1 month, clipped [-4, 4]
+  [12] autocorr_20   — rolling lag-1 autocorrelation ~1 month    
 
   PORTFOLIO STATE:
   [13] position      — current position in [-1, 1]
@@ -31,16 +31,12 @@ Observation space (20 features):
   [18] cnn_feat_1    — CNN latent dimension 1
   [19] cnn_feat_2    — CNN latent dimension 2
 
-All lookback windows are multiplied by (bars_per_year // 252) so they
-represent the same calendar duration regardless of bar frequency.
-  daily (252 bars/yr):  scale=1  → windows: 5, 10, 20, 60, 14 bars
-  1-hour (1638 bars/yr): scale=6 → windows: 30, 60, 120, 360, 84 bars
 
 Action space: continuous [-1, 1]
   -1 = full short, 0 = flat, +1 = full long
   Intermediate values = fractional positions
 
-Reward function (unified, parametric):
+Reward function :
   r_t = net_ret / vol_scale  -  λ * (dd_dev + dd_penalty)
 
   λ controls risk aversion on a smooth spectrum:
@@ -58,10 +54,9 @@ from gymnasium import spaces
 # Named presets for convenience (maps name → lambda value)
 AGENT_PRESETS = {
     "aggressive": 0.0,
-    "growth": 0.25,
-    "balanced": 0.75,
+    "growth": 0.5,
+    "balanced": 1.0,
     "conservative": 1.5,
-    "ultra_conservative": 3.0,
 }
 
 N_OBS = 20  # total observation features

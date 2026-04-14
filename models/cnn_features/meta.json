@@ -1,10 +1,10 @@
 {
   "ticker": "^DJI",
   "interval": "1d",
-  "start": "2013-01-01",
-  "end": "2023-12-31",
+  "start": "2011-01-01",
+  "end": "2021-12-31",
   "input_length": 60,
   "latent_dim": 3,
   "bars_per_year": 252,
-  "val_accuracy": 0.7141
+  "val_accuracy": 0.6641
 }

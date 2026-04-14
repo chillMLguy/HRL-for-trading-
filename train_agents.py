@@ -117,7 +117,7 @@ def main():
                              "e.g. --agents aggressive balanced conservative")
     parser.add_argument("--cost_pct", default=0.0002, type=float,
                         help="One-way transaction cost fraction "
-                             "(default 0.0002 = 0.02% for intraday). "
+                             "(default 0.0002 = 0.02%% for intraday). "
                              "Use 0.001 for daily/conservative estimate.")
     parser.add_argument("--no_cnn", action="store_true",
                         help="Disable CNN features even if model exists")
