@@ -1,32 +1,34 @@
-# Phase 0 — Flat Baseline Agents
+# Hierarchical RL Trading System
+ 
+Master's thesis project: a multi-agent reinforcement learning system for trading, where diverse risk-profile agents are coordinated by a regime-aware meta-controller.
 
-Three independent SAC agents trained on the same single asset.
-The only difference between them is their risk exposure in **reward function**.
-This is the empirical foundation for the hierarchical system.
+## Phase 0 — Independent Agents
+ 
+Four SAC agents trained on the same asset (^DJI) with identical observations but different risk-aversion parameters (λ)
 
-## Project structure
-
+Each agent sees 20 features (momentum, volatility, higher-order stats, portfolio state, CNN latent features) and outputs a continuous position in [-1, 1].
+ 
+```bash
+python train_agents.py --ticker "^DJI" --start 2011-01-01 --end 2021-12-31 --interval 1d
+python evaluate_agents.py --ticker "^DJI" --start 2022-01-01 --end 2022-12-31
 ```
-phase0/
-├── env/
-│   └── trading_env.py      ← Custom Gymnasium environment + 3 reward functions
-├── train_agents.py         ← Trains all three agents, saves models/
-├── evaluate_agents.py      ← Loads models, computes metrics + regime table
-├── plot_results.py         ← Plots equity curves, drawdown, rolling Sharpe
-└── requirements.txt
+ 
+## Phase 1 — Portfolio Allocation via Regime Detection
+ 
+A high-level allocator blends the four agents' proposed actions using weights determined by market regime. Three methods are compared:
+ 
+- **Equal Weight** — constant 1/3 split (baseline)
+- **Volatility Regime** — rule-based: rolling vol percentiles map to fixed weight profiles (aggressive in calm markets, conservative in turbulent)
+- **HMM** — Gaussian Hidden Markov Model fitted on log returns + rolling volatility; posterior state probabilities drive agent weights through a learned mapping
+ 
+```bash
+python train_phase1.py --ticker "^DJI" --train_start 2011-01-01 --train_end 2021-12-31
+python evaluate_phase1.py --ticker "^DJI" --test_start 2022-01-01 --test_end 2022-12-31
+python plot_phase1.py
 ```
-
-## Quickstart
-
+ 
+## Setup
+ 
 ```bash
 pip install -r requirements.txt
-
-# 1. Train (uses SPY 2010–2022 by default)
-python train_agents.py --ticker SPY --start 2010-01-01 --end 2022-12-31
-
-# 2. Evaluate on held-out test period
-python evaluate_agents.py --ticker SPY --start 2023-01-01 --end 2024-12-31
-
-# 3. Plot
-python plot_results.py --csvpath equity_curves.csv
 ```

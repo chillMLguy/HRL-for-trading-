@@ -54,8 +54,7 @@ from gymnasium import spaces
 # Named presets for convenience (maps name → lambda value)
 AGENT_PRESETS = {
     "aggressive": 0.0,
-    "growth": 0.5,
-    "balanced": 1.0,
+    "balanced": 0.75,
     "conservative": 1.5,
 }
 
@@ -270,7 +269,7 @@ class TradingEnv(gym.Env):
     Parameters
     ----------
     prices          : pd.Series or np.ndarray of close prices
-    lam             : float — risk aversion parameter (λ). 0 = aggressive, 3 = ultra-conservative
+    lam             : float — risk aversion parameter (λ). 
     bars_per_year   : 252 for daily, 1638 for 1h; drives ANN factor & lookback scaling
     cost_pct        : one-way transaction cost (default 0.01% — realistic for intraday)
     max_hold        : normalisation for time_in_trade feature
