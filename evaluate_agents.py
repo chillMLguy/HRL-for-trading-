@@ -138,7 +138,7 @@ def main():
     parser.add_argument("--ticker",   default="SPY")
     parser.add_argument("--start",    default="2025-11-01")
     parser.add_argument("--end",      default="2026-03-15")
-    parser.add_argument("--interval", default="1h",
+    parser.add_argument("--interval", default="1d",
                         choices=list(BARS_PER_YEAR.keys()),
                         help="Bar interval (default: 1h)")
     parser.add_argument("--modeldir", default=".")
