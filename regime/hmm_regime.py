@@ -16,12 +16,24 @@ from hmmlearn.hmm import GaussianHMM
 class HMMRegimeDetector:
 
     def __init__(self, n_states=3, n_iter=200, covariance_type="full",
-                 random_state=42):
+                 random_state=42, use_scaler=True):
+        """
+        Parameters
+        ----------
+        use_scaler : bool
+            If True, fit a sklearn StandardScaler on the training
+            observations and apply it during inference. Recommended
+            because raw (log_ret, vol_20) features have very different
+            scales and the absolute level of vol drifts between training
+            and test periods.
+        """
         self.n_states = n_states
         self.n_iter = n_iter
         self.covariance_type = covariance_type
         self.random_state = random_state
+        self.use_scaler = use_scaler
         self.model = None
+        self.scaler = None  # set inside fit() when use_scaler=True
 
     # ── Feature construction ───────────────────────────────────────
 
@@ -65,7 +77,16 @@ class HMMRegimeDetector:
     def fit(self, observations):
         """
         Fit HMM and sort states by increasing emission volatility.
+
+        If use_scaler=True, fits a StandardScaler on `observations` first
+        and transforms them. The same scaler is then applied at inference
+        time inside predict_proba / decode / score.
         """
+        if self.use_scaler:
+            from sklearn.preprocessing import StandardScaler
+            self.scaler = StandardScaler().fit(observations)
+            observations = self.scaler.transform(observations)
+
         model = GaussianHMM(
             n_components=self.n_states,
             covariance_type=self.covariance_type,
@@ -94,6 +115,11 @@ class HMMRegimeDetector:
 
     # ── Inference ──────────────────────────────────────────────────
 
+    def _transform(self, observations):
+        if self.scaler is not None:
+            return self.scaler.transform(observations)
+        return observations
+
     def predict_proba(self, observations):
         """
         Forward-algorithm posterior probabilities (no future look-ahead).
@@ -102,7 +128,7 @@ class HMMRegimeDetector:
         """
         if self.model is None:
             raise RuntimeError("Model not fitted. Call fit() first.")
-        return self.model.predict_proba(observations)
+        return self.model.predict_proba(self._transform(observations))
 
     def decode(self, observations):
         """
@@ -114,8 +140,14 @@ class HMMRegimeDetector:
         """
         if self.model is None:
             raise RuntimeError("Model not fitted. Call fit() first.")
-        _, states = self.model.decode(observations)
+        _, states = self.model.decode(self._transform(observations))
         return states
+
+    def score(self, observations):
+        """Log-likelihood of the observations under the fitted HMM."""
+        if self.model is None:
+            raise RuntimeError("Model not fitted. Call fit() first.")
+        return float(self.model.score(self._transform(observations)))
 
     # ── Persistence ────────────────────────────────────────────────
 
@@ -124,14 +156,18 @@ class HMMRegimeDetector:
             "model": self.model,
             "n_states": self.n_states,
             "covariance_type": self.covariance_type,
+            "scaler": self.scaler,
+            "use_scaler": self.use_scaler,
         }, path)
 
     @classmethod
     def load(cls, path):
         data = joblib.load(path)
         det = cls(n_states=data["n_states"],
-                  covariance_type=data["covariance_type"])
+                  covariance_type=data["covariance_type"],
+                  use_scaler=data.get("use_scaler", False))
         det.model = data["model"]
+        det.scaler = data.get("scaler", None)
         return det
 
     # ── Diagnostics ────────────────────────────────────────────────

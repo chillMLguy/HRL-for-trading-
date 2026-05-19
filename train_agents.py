@@ -14,9 +14,10 @@ from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.monitor import Monitor
 
 from env.trading_env import TradingEnv, AGENT_PRESETS
+import config
 
 
-BARS_PER_YEAR = {"1d": 252, "1h": 1638, "30m": 3276, "15m": 6552}
+BARS_PER_YEAR = config.BARS_PER_YEAR
 
 
 def download_data(ticker, start, end, interval="1h"):
@@ -98,13 +99,13 @@ def _train_worker(args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ticker",   default="SPY")
-    parser.add_argument("--start",    default="2024-04-01")
-    parser.add_argument("--end",      default="2025-10-31")
-    parser.add_argument("--interval", default="1d",
+    parser.add_argument("--ticker",   default=config.TICKER)
+    parser.add_argument("--start",    default=config.TRAIN_START)
+    parser.add_argument("--end",      default=config.TRAIN_END)
+    parser.add_argument("--interval", default=config.INTERVAL,
                         choices=list(BARS_PER_YEAR.keys()))
     parser.add_argument("--outdir",  default=".")
-    parser.add_argument("--seed",    default=42, type=int)
+    parser.add_argument("--seed",    default=config.SEED, type=int)
     parser.add_argument("--quick",   action="store_true",
                         help="50k steps, [64,64] net — full loop in ~5 min")
     parser.add_argument("--full",    action="store_true",
@@ -115,10 +116,10 @@ def main():
                         choices=list(AGENT_PRESETS.keys()),
                         help="Which agents to train (default: all). "
                              "e.g. --agents aggressive balanced conservative")
-    parser.add_argument("--cost_pct", default=0.0002, type=float,
+    parser.add_argument("--cost_pct", default=config.COST_PCT, type=float,
                         help="One-way transaction cost fraction "
-                             "(default 0.0002 = 0.02%% for intraday). "
-                             "Use 0.001 for daily/conservative estimate.")
+                             f"(default {config.COST_PCT} from config.py). "
+                             "Must match the value used in evaluate_*.")
     parser.add_argument("--no_cnn", action="store_true",
                         help="Disable CNN features even if model exists")
     args = parser.parse_args()

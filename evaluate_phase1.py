@@ -33,9 +33,10 @@ from regime.hmm_regime import HMMRegimeDetector
 from regime.allocators import (EqualWeightAllocator,
                                VolatilityRegimeAllocator,
                                HMMAllocator, AGENT_ORDER, N_AGENTS)
+import config
 
 
-BARS_PER_YEAR = {"1d": 252, "1h": 1638, "30m": 3276, "15m": 6552}
+BARS_PER_YEAR = config.BARS_PER_YEAR
 
 
 def run_allocator(alloc, agents, prices, ann, cost_pct,
@@ -57,7 +58,11 @@ def run_allocator(alloc, agents, prices, ann, cost_pct,
     obs, _ = portfolio_env.reset()
     warmup = portfolio_env.warmup
 
-    equity_list = [1.0]
+    # Start equity series at the env's initial_capital so the first
+    # element is consistent with subsequent info["equity"] values.
+    # Previously hardcoded to [1.0], which only happened to be right
+    # because initial_capital defaults to 1.0.
+    equity_list = [float(portfolio_env.initial_capital)]
     returns_list = []
     weight_history = []
     action_history = []
@@ -173,20 +178,29 @@ def sanity_checks(results):
 def main():
     parser = argparse.ArgumentParser(
         description="Phase 1 — Evaluate all allocators on test data")
-    parser.add_argument("--ticker",     default="^DJI")
-    parser.add_argument("--test_start", default="2022-01-01")
-    parser.add_argument("--test_end",   default="2022-12-31")
+    parser.add_argument("--ticker",     default=config.TICKER)
+    parser.add_argument("--test_start", default=config.TEST_START)
+    parser.add_argument("--test_end",   default=config.TEST_END)
     parser.add_argument("--modeldir",   default=".")
-    parser.add_argument("--interval",   default="1d",
+    parser.add_argument("--interval",   default=config.INTERVAL,
                         choices=list(BARS_PER_YEAR.keys()))
-    parser.add_argument("--cost_pct",   type=float, default=0.0005)
+    parser.add_argument("--cost_pct",   type=float, default=config.COST_PCT)
     parser.add_argument("--no_cnn",     action="store_true")
     parser.add_argument("--outdir",     default=".",
                         help="Where to save CSV results")
     args = parser.parse_args()
 
     ann = BARS_PER_YEAR[args.interval]
-    cnn_path = None if args.no_cnn else None  # extend if CNN path needed
+
+    # CNN path: detect automatically unless --no_cnn was passed.
+    # Previously this line was `cnn_path = None if args.no_cnn else None`,
+    # which is always None — making --no_cnn a silent no-op.
+    cnn_path = None
+    if not args.no_cnn:
+        candidate = os.path.join(args.modeldir, "models", "cnn_features",
+                                 "cnn_model.pt")
+        if os.path.isfile(candidate):
+            cnn_path = candidate
 
     # ── 1. Download test data ─────────────────────────────────────
     print(f"\n{'='*60}")
@@ -249,8 +263,11 @@ def main():
         print(f"    Final equity: {eq[-1]:.4f}  "
               f"({(eq[-1]/eq[0]-1)*100:+.2f}%)")
 
-    # ── 5. Buy-and-hold benchmark ─────────────────────────────────
-    bh = buy_and_hold(prices)
+    # ── 5. Buy-and-hold benchmark (aligned to agents' window) ───────
+    alloc_names = list(results.keys())
+    warmup = results[alloc_names[0]]["warmup"]
+    n_steps = len(results[alloc_names[0]]["returns"])
+    bh = buy_and_hold(prices, warmup=warmup, n_steps=n_steps)
 
     # ── 6. Sanity checks ──────────────────────────────────────────
     sanity_checks(results)
@@ -267,13 +284,16 @@ def main():
 
     # ── 8. Per-regime breakdown ───────────────────────────────────
     print(f"\n  Per-regime breakdown (vol-based labels):")
+    # Align labels to the agents' trading window — see evaluate_agents.py
+    # for the matching alignment block.
     regimes = label_regimes(prices, ann)
+    label_offset = max(20, ann // 13)
+    regimes = regimes[max(0, warmup - label_offset):]
     for aname, res in results.items():
         r = res["returns"]
-        # Align regime labels to returns length
         reg = regimes[:len(r)] if len(regimes) >= len(r) \
             else np.concatenate([regimes,
-                                 np.full(len(r)-len(regimes), "mid_vol")])
+                                 np.full(len(r) - len(regimes), "mid_vol")])
         rt = regime_table(r, reg[:len(r)], ann)
         if not rt.empty:
             print(f"\n  [{aname}]")
@@ -281,20 +301,17 @@ def main():
 
     # ── 9. Save CSVs ──────────────────────────────────────────────
     os.makedirs(args.outdir, exist_ok=True)
-    alloc_names = list(results.keys())
-    n_steps = len(results[alloc_names[0]]["returns"])
 
     # Equity curves
     eq_df = pd.DataFrame({"step": np.arange(n_steps + 1)})
     for aname in alloc_names:
         eq_df[aname] = results[aname]["equity"]
-    # Align buy-and-hold equity to same length
-    bh_eq = bh["equity"]
-    warmup = results[alloc_names[0]]["warmup"]
-    bh_aligned = bh_eq[warmup:warmup + n_steps + 1]
-    if len(bh_aligned) == n_steps + 1:
-        bh_aligned = bh_aligned / bh_aligned[0]  # rebase
-        eq_df["buy_and_hold"] = bh_aligned
+    # B&H equity is already aligned and rebased by buy_and_hold().
+    if len(bh["equity"]) == n_steps + 1:
+        eq_df["buy_and_hold"] = bh["equity"]
+    else:
+        print(f"  [warn] B&H length {len(bh['equity'])} != n_steps+1 "
+              f"({n_steps + 1}) — skipping B&H column")
     eq_path = os.path.join(args.outdir, "phase1_equity_curves.csv")
     eq_df.to_csv(eq_path, index=False)
     print(f"\n  Saved → {eq_path}")

@@ -8,9 +8,7 @@ import pandas as pd
 import yfinance as yf
 from stable_baselines3 import SAC
 from env.trading_env import TradingEnv, AGENT_PRESETS
-
-
-BARS_PER_YEAR = {"1d": 252, "1h": 1638, "30m": 3276, "15m": 6552}
+import config
 
 # ── Metrics ───────────────────────────────────────────────────────
 
@@ -118,40 +116,68 @@ def rollout(model, prices, lam, bars_per_year=1638, cost_pct=0.0002,
         "returns":   np.array(returns,   dtype=np.float32),
         "equity":    np.array(equity,    dtype=np.float32),
         "positions": np.array(positions, dtype=np.float32),
+        "warmup":    int(env.warmup),
     }
 
 
 # ── Buy-and-hold benchmark ────────────────────────────────────────
 
-def buy_and_hold(prices):
-    log_r = np.diff(np.log(prices.values)).astype(np.float32)
-    eq    = np.cumprod(1 + log_r)
-    eq    = np.concatenate([[1.0], eq])
-    return {"returns": log_r, "equity": eq,
-            "positions": np.ones(len(log_r), dtype=np.float32)}
+def buy_and_hold(prices, warmup=0, n_steps=None):
+    """
+    Compute B&H equity over the trading window [warmup, warmup+n_steps].
+
+    Uses simple returns (np.diff(p)/p[:-1]) for consistency with the agent
+    rollout (which compounds simple `net_ret` from the env). Rebases the
+    series to 1.0 at the first bar of the trading window so it lines up
+    with the agent equity curves on the same axes.
+
+    When warmup=0 and n_steps=None, behaves as before (full series, rebased
+    at index 0).
+    """
+    p = np.asarray(prices.values if hasattr(prices, "values") else prices,
+                   dtype=np.float64)
+    simple_r = np.diff(p) / p[:-1]
+    eq_full = np.concatenate([[1.0], np.cumprod(1.0 + simple_r)])
+
+    if n_steps is None:
+        eq_window = eq_full
+        ret_window = simple_r
+    else:
+        # equity over [warmup, warmup + n_steps]  →  length n_steps + 1
+        end = warmup + n_steps + 1
+        eq_window = eq_full[warmup:end]
+        ret_window = simple_r[warmup:warmup + n_steps]
+
+    # Rebase to 1.0 at the first bar of the window
+    eq_window = (eq_window / eq_window[0]).astype(np.float32)
+    return {
+        "returns":   ret_window.astype(np.float32),
+        "equity":    eq_window,
+        "positions": np.ones(len(ret_window), dtype=np.float32),
+        "warmup":    int(warmup),
+    }
 
 
 # ── Main ───────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ticker",   default="SPY")
-    parser.add_argument("--start",    default="2025-11-01")
-    parser.add_argument("--end",      default="2026-03-15")
-    parser.add_argument("--interval", default="1d",
-                        choices=list(BARS_PER_YEAR.keys()),
-                        help="Bar interval (default: 1h)")
+    parser.add_argument("--ticker",   default=config.TICKER)
+    parser.add_argument("--start",    default=config.TEST_START)
+    parser.add_argument("--end",      default=config.TEST_END)
+    parser.add_argument("--interval", default=config.INTERVAL,
+                        choices=list(config.BARS_PER_YEAR.keys()))
     parser.add_argument("--modeldir", default=".")
     parser.add_argument("--agents",   default=None, nargs="+",
                         choices=list(AGENT_PRESETS.keys()),
                         help="Subset of agents to evaluate (default: all found)")
-    parser.add_argument("--cost_pct", default=0.0002, type=float,
+    parser.add_argument("--cost_pct", default=config.COST_PCT, type=float,
                         help="One-way transaction cost — must match training value")
     parser.add_argument("--no_cnn", action="store_true",
                         help="Disable CNN features even if model exists")
     args = parser.parse_args()
 
-    ann = BARS_PER_YEAR[args.interval]
+    ann = config.BARS_PER_YEAR[args.interval]
 
     # Auto-detect CNN model
     cnn_model_path = None
@@ -202,9 +228,19 @@ def main():
         results[name] = rollout(model, prices, lam, ann, args.cost_pct,
                                 cnn_model_path)
 
-    # Add buy-and-hold benchmark
-    results["buy_&_hold"] = buy_and_hold(prices)
-    print(f"  Buy-and-hold benchmark added.")
+    # Buy-and-hold benchmark — aligned to the exact same window the
+    # agents traded (prices[warmup : warmup + n_steps + 1]), rebased
+    # to 1.0 at the first trading bar. Previously this was sliced from
+    # index 0, so the saved B&H column covered the warmup period rather
+    # than the agents' trading period — the source of the Phase 0 / Phase 1
+    # B&H mismatch.
+    sample = next(iter(results.values()))
+    warmup = sample["warmup"]
+    n_steps = len(sample["positions"])
+    results["buy_&_hold"] = buy_and_hold(prices, warmup=warmup,
+                                         n_steps=n_steps)
+    print(f"  Buy-and-hold benchmark added "
+          f"(window: bar {warmup} → {warmup + n_steps}).")
 
     # ── Overall metrics ───────────────────────────────────────────
     sep = "=" * 80
@@ -220,6 +256,14 @@ def main():
     print(f"\n{sep}")
     print("  REGIME-CONDITIONAL SHARPE")
     print(sep)
+
+    # Align regime labels to the agents' trading window. label_regimes()
+    # returns labels starting at the rolling-vol window offset; agents
+    # trade from `warmup` onwards.  Skip the leading labels so that
+    # regimes[i] corresponds to the same bar as ret[i].
+    label_offset = max(20, ann // 13)
+    ref_warmup = next(iter(results.values()))["warmup"]
+    regimes = regimes[max(0, ref_warmup - label_offset):]
 
     # Compact cross-table: rows=agents, cols=regimes
     reg_rows = {}

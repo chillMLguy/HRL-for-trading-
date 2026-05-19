@@ -182,11 +182,23 @@ class HMMAllocator(BaseAllocator):
     """
 
     # Rows = HMM states (low-vol → high-vol)
-    # Cols = agents in AGENT_ORDER (aggressive, growth, balanced, conservative)
+    # Cols = agents in AGENT_ORDER
+
+    # 3 states × 4 agents (aggressive, growth, balanced, conservative)
     DEFAULT_WEIGHT_MAP_3x4 = np.array([
         [0.45, 0.30, 0.15, 0.10],   # state 0: low-vol
         [0.10, 0.25, 0.40, 0.25],   # state 1: mid-vol
         [0.05, 0.10, 0.30, 0.55],   # state 2: high-vol
+    ])
+
+    # 3 states × 3 agents (aggressive, balanced, conservative) — matches
+    # the current AGENT_PRESETS in env/trading_env.py and the weight map
+    # documented in PROJECT_CONTEXT.md.  Previously this case fell through
+    # to np.eye(3), which assigned 100% weight to a single agent per state.
+    DEFAULT_WEIGHT_MAP_3x3 = np.array([
+        [0.45, 0.30, 0.25],   # state 0: low-vol  — favor aggressive
+        [0.10, 0.40, 0.50],   # state 1: mid-vol  — balanced/conservative
+        [0.05, 0.30, 0.65],   # state 2: high-vol — conservative-heavy
     ])
 
     def __init__(self, hmm_detector, weight_map=None):
@@ -201,10 +213,12 @@ class HMMAllocator(BaseAllocator):
 
         if weight_map is not None:
             self._wmap = np.asarray(weight_map, dtype=np.float64)
+        elif K == 3 and N_AGENTS == 3:
+            self._wmap = self.DEFAULT_WEIGHT_MAP_3x3.copy()
         elif K == 3 and N_AGENTS == 4:
             self._wmap = self.DEFAULT_WEIGHT_MAP_3x4.copy()
         elif K == N_AGENTS:
-            # Identity-like: state i → agent i
+            # Last resort: identity (state i → 100% agent i)
             self._wmap = np.eye(K)
         else:
             raise ValueError(

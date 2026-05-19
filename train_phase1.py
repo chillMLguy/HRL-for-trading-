@@ -25,23 +25,34 @@ import yfinance as yf
 from env.trading_env import AGENT_PRESETS
 from regime.hmm_regime import HMMRegimeDetector
 from regime.allocators import VolatilityRegimeAllocator, AGENT_ORDER
+import config
 
 
-BARS_PER_YEAR = {"1d": 252, "1h": 1638, "30m": 3276, "15m": 6552}
+BARS_PER_YEAR = config.BARS_PER_YEAR
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="Phase 1 — Fit HMM and compute vol thresholds")
-    parser.add_argument("--ticker",      default="^DJI")
-    parser.add_argument("--train_start", default="2011-01-01")
-    parser.add_argument("--train_end",   default="2021-12-31")
+    parser.add_argument("--ticker",      default=config.TICKER)
+    parser.add_argument("--train_start", default=config.TRAIN_START)
+    parser.add_argument("--train_end",   default=config.TRAIN_END)
     parser.add_argument("--outdir",      default=".")
-    parser.add_argument("--n_states",    type=int, default=3)
-    parser.add_argument("--seed",        type=int, default=42)
-    parser.add_argument("--interval",    default="1d",
+    parser.add_argument("--n_states",    type=int, default=config.N_STATES)
+    parser.add_argument("--seed",        type=int, default=config.SEED)
+    parser.add_argument("--interval",    default=config.INTERVAL,
                         choices=list(BARS_PER_YEAR.keys()))
-    parser.add_argument("--cost_pct",    type=float, default=0.0005)
+    parser.add_argument("--cost_pct",    type=float, default=config.COST_PCT)
+    parser.add_argument("--embargo",     type=int, default=config.HMM_EMBARGO,
+                        help="Drop last N training obs to reduce "
+                             "train→test contamination.")
+    parser.add_argument("--val_frac",    type=float,
+                        default=config.HMM_VAL_FRAC,
+                        help="Hold out last X%% of (training−embargo) "
+                             "as a validation slice for log-likelihood "
+                             "reporting.")
+    parser.add_argument("--no_scaler",   action="store_true",
+                        help="Skip StandardScaler on HMM observations.")
     args = parser.parse_args()
 
     ann = BARS_PER_YEAR[args.interval]
@@ -81,13 +92,34 @@ def main():
     # ── 3. Fit HMM ────────────────────────────────────────────────
     print(f"\n  Fitting HMM ({args.n_states} states) ...")
     hmm = HMMRegimeDetector(n_states=args.n_states,
-                            random_state=args.seed)
+                            random_state=args.seed,
+                            use_scaler=not args.no_scaler)
     obs, valid_start = HMMRegimeDetector.build_observations(prices)
     print(f"  Observation matrix: {obs.shape}  "
           f"(valid from price index {valid_start})")
 
-    hmm.fit(obs)
+    # Drop the final `embargo` observations to reduce contamination
+    # between the end of the training window and the start of the test
+    # window, then hold out a validation slice for log-likelihood
+    # reporting (no model selection — just a sanity check on the fit).
+    embargo = max(0, int(args.embargo))
+    n_total = len(obs)
+    fit_end = n_total - embargo
+    val_size = int(args.val_frac * fit_end)
+    val_start = max(1, fit_end - val_size)
+    obs_fit = obs[:val_start]
+    obs_val = obs[val_start:fit_end]
+    print(f"  Embargo: dropping last {embargo} obs "
+          f"(of {n_total}) before fit")
+    print(f"  Fit slice:  obs[0:{val_start}]   ({len(obs_fit)} rows)")
+    print(f"  Val slice:  obs[{val_start}:{fit_end}] ({len(obs_val)} rows)")
+
+    hmm.fit(obs_fit)
     hmm.summary()
+    if len(obs_val) > 0:
+        val_ll = hmm.score(obs_val)
+        print(f"  Validation log-likelihood: {val_ll:.3f}  "
+              f"(per-obs: {val_ll / len(obs_val):.4f})")
 
     hmm_path = os.path.join(out_dir, "hmm_model.pkl")
     hmm.save(hmm_path)

@@ -1,10 +1,10 @@
 {
   "ticker": "^DJI",
-  "train_start": "2011-01-01",
-  "train_end": "2021-12-31",
+  "train_start": "2013-01-01",
+  "train_end": "2023-12-31",
   "interval": "1d",
   "bars_per_year": 252,
-  "cost_pct": 0.0005,
+  "cost_pct": 0.0002,
   "n_states": 3,
   "seed": 42,
   "n_train_bars": 2768,

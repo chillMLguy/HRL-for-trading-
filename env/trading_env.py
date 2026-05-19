@@ -60,6 +60,11 @@ AGENT_PRESETS = {
 
 N_OBS = 20  # total observation features
 
+# Defaults for env-internal lookbacks. Both are scaled by the per-frequency
+# factor inside TradingEnv (×1 for daily, ×6 for 1h, etc.).
+DEFAULT_WARMUP_BARS = 60   # bars before trading can start (need rolling stats)
+DEFAULT_BUFFER_BARS = 50   # ring buffer length for the reward statistics
+
 
 def _precompute_features(returns: np.ndarray,
                          bars_per_year: int = 1638,
@@ -316,9 +321,9 @@ class TradingEnv(gym.Env):
         self.dd_max          = np.float32(dd_max)
         self.dd_range        = np.float32(dd_max - dd_free)
         self.eval_mode       = eval_mode
-        self.warmup          = 60 * scale   
+        self.warmup          = DEFAULT_WARMUP_BARS * scale
 
-        _buf_size = buf_size if buf_size > 0 else 50 * scale 
+        _buf_size = buf_size if buf_size > 0 else DEFAULT_BUFFER_BARS * scale
         self.buf_size = _buf_size
 
         # Ring buffer stores vol-normalized returns
@@ -390,10 +395,32 @@ class TradingEnv(gym.Env):
 
     def _compute_reward(self, net_ret):
         """
-          r_t = net_ret / downside_dev  -  λ * (dd_dev + dd_penalty)
+        Composite per-step reward used to train every agent.
 
-        Returns (reward, dd_terminated) where dd_terminated is True if
-        drawdown exceeded dd_max.
+            r_t = net_ret / vol_scale  -  λ · (dd_dev + dd_penalty)
+
+        where:
+          • vol_scale  = downside deviation of returns in a ring buffer
+                         (~50 bars × scale). Falls back to the realised
+                         vol_20 feature when the buffer doesn't yet hold
+                         enough negative returns to estimate downside_dev.
+          • dd_dev     = the same downside-deviation statistic re-used as
+                         a *linear* risk term inside the penalty bracket.
+                         Yes, dd_dev appears twice — once as the per-step
+                         volatility normaliser (Sortino-style scaling) and
+                         once as a continuous drag scaled by λ. This is
+                         intentional: the normaliser stabilises learning
+                         across regimes, the linear drag pushes agents
+                         away from sustained downside volatility even when
+                         the per-step return is small.
+          • dd_penalty = zone-based quadratic penalty on the current
+                         drawdown:  0 below dd_free, ((dd-dd_free)/range)²
+                         in the soft zone, and a hard 1.0 + episode
+                         termination once dd_max is breached (training
+                         only — eval_mode disables termination).
+
+        Returns (reward, dd_terminated) where dd_terminated is True iff
+        drawdown exceeded dd_max on this step.
         """
         # 1. Store raw return in ring buffer
         self._rbuf[self._rbuf_i] = np.float32(net_ret)
