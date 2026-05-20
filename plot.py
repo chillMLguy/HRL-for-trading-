@@ -1,23 +1,8 @@
 """
 Unified visualisation for Phase 0 and Phase 1 results.
-
-Replaces plot_results.py, plot_phase1.py, and plot_all.py with a single
-file that produces 15 PNGs in a consistent light-academic style.
-
 Usage
 -----
   python plot.py --plots all
-  python plot.py --plots p0_equity,signals --outdir plots/
-  python plot.py --plots all --ticker ^DJI \
-                 --test_start 2022-01-01 --test_end 2022-12-31
-
-Reads (any missing CSV → the affected plots are skipped, not errored):
-  equity_curves.csv          (Phase 0 — from evaluate_agents.py)
-  phase1_equity_curves.csv   (Phase 1 — from evaluate_phase1.py)
-  phase1_weights.csv
-  phase1_actions.csv
-  phase1_metrics.csv
-  regime_table.csv           (optional — rendered as heatmap)
 
 Outputs in --outdir (default = --datadir):
   p0_equity.png, p0_drawdown.png, p0_rolling_sharpe.png,
@@ -26,8 +11,8 @@ Outputs in --outdir (default = --datadir):
   p1_weight_evolution.png, p1_actions_on_price.png, p1_metrics_bar.png,
   combined_equity.png, combined_sharpe_bar.png,
   combined_metrics_table.png,
-  signals.png                (requires saved models + network for ^DJI)
-  regime_table.png           (only if regime_table.csv present)
+  signals.png                
+  regime_table.png    
 """
 
 import argparse
@@ -40,6 +25,7 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import matplotlib.patches as mpatches
 
 import config
@@ -52,7 +38,7 @@ import config
 BARS_PER_YEAR = config.BARS_PER_YEAR
 
 P0_COLORS = {
-    "aggressive":         "#E74C3C",
+    "aggressive":         "#D23B2B",
     "growth":             "#E67E22",
     "balanced":           "#3498DB",
     "conservative":       "#1ABC9C",
@@ -153,6 +139,50 @@ def _save(fig, outdir, name):
     fig.savefig(path, facecolor=fig.get_facecolor())
     print(f"  Saved → {path}")
     plt.close(fig)
+
+
+
+def _warmup_for(interval):
+    ann = config.BARS_PER_YEAR.get(interval, 252)
+    scale = max(1, ann // 252)
+    return 60 * scale
+
+
+def _make_date_index(prices, n_rows, interval):
+    if prices is None:
+        return None
+    warmup = _warmup_for(interval)
+    if len(prices) < warmup + n_rows:
+        return None
+    return pd.to_datetime(prices.index[warmup:warmup + n_rows])
+
+
+def _format_date_axis(ax, dates, fig=None):
+    if dates is None or len(dates) < 2:
+        return
+    span_days = (dates[-1] - dates[0]).days
+    if span_days > 365 * 3:
+        ax.xaxis.set_major_locator(mdates.YearLocator())
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+    elif span_days > 180:
+        ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=(1, 4, 7, 10)))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+    else:
+        ax.xaxis.set_major_locator(mdates.MonthLocator())
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+    if fig is not None:
+        fig.autofmt_xdate(rotation=30, ha="right")
+
+
+def _x_for(n_or_df, dates):
+    n = n_or_df if isinstance(n_or_df, int) else len(n_or_df)
+    if dates is not None and len(dates) >= n:
+        return np.asarray(dates[:n])
+    return np.arange(n)
+
+
+def _xlabel(dates):
+    return "Date" if dates is not None else "Step"
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -332,62 +362,70 @@ def _p1_alloc_names(eq_df):
 #  Phase 0 plots
 # ═══════════════════════════════════════════════════════════════════
 
-def plot_p0_equity(df, outdir, ann):
+def plot_p0_equity(df, outdir, ann, dates=None):
     fig, ax = plt.subplots(figsize=(13, 5))
+    x = _x_for(df, dates)
     for name in df.columns:
         lw = 1.8 if name == "buy_&_hold" else 1.3
         ls = "--" if name == "buy_&_hold" else "-"
         alpha = 0.65 if name == "buy_&_hold" else 0.9
-        ax.plot(df[name].values, color=_color_for(name),
+        ax.plot(x, df[name].values, color=_color_for(name),
                 lw=lw, ls=ls, alpha=alpha, label=_label_for(name))
     ax.axhline(100, color="#BDC3C7", lw=0.6, ls=":", alpha=0.6)
     ax.set_ylabel("Portfolio Value (indexed 100)")
-    ax.set_xlabel("Step")
+    ax.set_xlabel(_xlabel(dates))
     ax.set_title("Phase 0 — λ-Spectrum Agent Equity Curves", pad=12)
     ax.legend(loc="upper left")
     ax.grid(True)
+    _format_date_axis(ax, dates, fig)
     _watermark(fig)
     _save(fig, outdir, "p0_equity.png")
 
 
-def plot_p0_drawdown(df, outdir):
+def plot_p0_drawdown(df, outdir, dates=None):
     fig, ax = plt.subplots(figsize=(13, 4))
+    x = _x_for(df, dates)
     last_dd = None
     for name in df.columns:
         dd = _drawdown(df[name].values)
         last_dd = dd
         lw = 1.5 if name == "buy_&_hold" else 1.1
         ls = "--" if name == "buy_&_hold" else "-"
-        ax.plot(dd, color=_color_for(name), lw=lw, ls=ls,
+        ax.plot(x, dd, color=_color_for(name), lw=lw, ls=ls,
                 alpha=0.85, label=_label_for(name))
     if last_dd is not None:
-        ax.fill_between(range(len(last_dd)), last_dd, 0,
-                        alpha=0.03, color="#E74C3C")
+        ax.fill_between(x, last_dd, 0, alpha=0.03, color="#E74C3C")
     ax.set_ylabel("Drawdown (%)")
-    ax.set_xlabel("Step")
+    ax.set_xlabel(_xlabel(dates))
     ax.set_title("Phase 0 — Drawdown Comparison", pad=12)
     ax.legend(loc="lower left", fontsize=8)
     ax.grid(True)
+    _format_date_axis(ax, dates, fig)
     _watermark(fig)
     _save(fig, outdir, "p0_drawdown.png")
 
 
-def plot_p0_rolling_sharpe(df, outdir, ann):
+def plot_p0_rolling_sharpe(df, outdir, ann, dates=None):
     window = _adaptive_window(ann)
     fig, ax = plt.subplots(figsize=(13, 4))
+    # Rolling Sharpe is computed from pct_change (drops 1 row), so its
+    # x-axis is offset by 1 relative to the equity dates.
+    x_dates = dates[1:] if dates is not None else None
     for name in df.columns:
         r = df[name].pct_change().dropna()
         rs = _rolling_sharpe(r.values, window, ann)
+        x = _x_for(len(rs), x_dates)
         lw = 1.4 if name == "buy_&_hold" else 1.0
         ls = "--" if name == "buy_&_hold" else "-"
-        ax.plot(rs.values, color=_color_for(name), lw=lw, ls=ls,
+        ax.plot(x, rs.values, color=_color_for(name), lw=lw, ls=ls,
                 alpha=0.85, label=_label_for(name))
     ax.axhline(0, color="#BDC3C7", lw=0.8, ls=":")
     ax.set_ylabel("Sharpe Ratio")
-    ax.set_xlabel("Step")
+    ax.set_xlabel(_xlabel(dates))
     ax.set_title(f"Phase 0 — Rolling {window}-bar Sharpe Ratio", pad=12)
     ax.legend(loc="best")
     ax.grid(True)
+    _format_date_axis(ax, x_dates, fig)
     _watermark(fig)
     _save(fig, outdir, "p0_rolling_sharpe.png")
 
@@ -450,55 +488,63 @@ def plot_p0_metrics_bar(df, outdir, ann):
 #  Phase 1 plots
 # ═══════════════════════════════════════════════════════════════════
 
-def plot_p1_equity(eq_df, outdir):
+def plot_p1_equity(eq_df, outdir, dates=None):
     fig, ax = plt.subplots(figsize=(13, 5))
+    x = _x_for(eq_df, dates)
     for aname in _p1_alloc_names(eq_df):
-        ax.plot(eq_df["step"], eq_df[aname],
+        ax.plot(x, eq_df[aname].values,
                 color=P1_COLORS.get(aname, "#566573"),
                 lw=1.5, label=P1_LABELS.get(aname, aname))
     if "buy_and_hold" in eq_df.columns:
-        ax.plot(eq_df["step"], eq_df["buy_and_hold"],
+        ax.plot(x, eq_df["buy_and_hold"].values,
                 color=P1_COLORS["buy_and_hold"],
                 lw=1.3, ls="--", alpha=0.7, label="Buy & Hold")
     ax.axhline(1.0, color="#BDC3C7", lw=0.6, ls=":", alpha=0.6)
-    ax.set_xlabel("Step")
+    ax.set_xlabel(_xlabel(dates))
     ax.set_ylabel("Cumulative Equity")
     ax.set_title("Phase 1 — Portfolio Equity Comparison", pad=12)
     ax.legend(loc="best")
     ax.grid(True)
+    _format_date_axis(ax, dates, fig)
     _watermark(fig)
     _save(fig, outdir, "p1_equity.png")
 
 
-def plot_p1_drawdown(eq_df, outdir):
+def plot_p1_drawdown(eq_df, outdir, dates=None):
     fig, ax = plt.subplots(figsize=(13, 4))
+    x = _x_for(eq_df, dates)
     for aname in _p1_alloc_names(eq_df):
         dd = _drawdown(eq_df[aname].values)
-        ax.plot(eq_df["step"], dd,
+        ax.plot(x, dd,
                 color=P1_COLORS.get(aname, "#566573"),
                 lw=1.2, label=P1_LABELS.get(aname, aname))
     if "buy_and_hold" in eq_df.columns:
         dd = _drawdown(eq_df["buy_and_hold"].values)
-        ax.plot(eq_df["step"], dd, color=P1_COLORS["buy_and_hold"],
+        ax.plot(x, dd, color=P1_COLORS["buy_and_hold"],
                 lw=1.0, ls="--", alpha=0.7, label="Buy & Hold")
-    ax.set_xlabel("Step")
+    ax.set_xlabel(_xlabel(dates))
     ax.set_ylabel("Drawdown (%)")
     ax.set_title("Phase 1 — Drawdown Comparison", pad=12)
     ax.legend(loc="lower left")
     ax.grid(True)
+    _format_date_axis(ax, dates, fig)
     _watermark(fig)
     _save(fig, outdir, "p1_drawdown.png")
 
 
-def plot_p1_rolling_sharpe(eq_df, outdir, ann):
+def plot_p1_rolling_sharpe(eq_df, outdir, ann, dates=None):
     window = _adaptive_window(ann)
     fig, ax = plt.subplots(figsize=(13, 4.5))
-    steps = eq_df["step"].values
+    # diff() drops the first row → x-axis starts at index 1
+    if dates is not None:
+        x = np.asarray(dates[1:])
+    else:
+        x = eq_df["step"].values[1:]
     for aname in _p1_alloc_names(eq_df):
         eq = eq_df[aname].values
         rets = np.diff(eq) / eq[:-1]
         rs = _rolling_sharpe(rets, window, ann)
-        ax.plot(steps[1:], rs.values,
+        ax.plot(x, rs.values,
                 color=P1_COLORS.get(aname, "#566573"),
                 lw=1.1, alpha=0.85,
                 label=P1_LABELS.get(aname, aname))
@@ -506,20 +552,21 @@ def plot_p1_rolling_sharpe(eq_df, outdir, ann):
         eq_bh = eq_df["buy_and_hold"].values
         rets_bh = np.diff(eq_bh) / eq_bh[:-1]
         rs_bh = _rolling_sharpe(rets_bh, window, ann)
-        ax.plot(steps[1:], rs_bh.values,
+        ax.plot(x, rs_bh.values,
                 color=P1_COLORS["buy_and_hold"],
                 lw=1.2, ls="--", alpha=0.65, label="Buy & Hold")
     ax.axhline(0, color="#BDC3C7", lw=0.8, ls=":")
-    ax.set_xlabel("Step")
+    ax.set_xlabel(_xlabel(dates))
     ax.set_ylabel("Sharpe Ratio")
     ax.set_title(f"Phase 1 — Rolling {window}-bar Sharpe Ratio", pad=12)
     ax.legend(loc="best")
     ax.grid(True)
+    _format_date_axis(ax, dates[1:] if dates is not None else None, fig)
     _watermark(fig)
     _save(fig, outdir, "p1_rolling_sharpe.png")
 
 
-def plot_p1_weight_evolution(w_df, outdir):
+def plot_p1_weight_evolution(w_df, outdir, dates=None):
     allocs = list(w_df["allocator"].unique())
     n = len(allocs)
     fig, axes = plt.subplots(n, 1, figsize=(13, 3.2 * n), sharex=True)
@@ -533,25 +580,27 @@ def plot_p1_weight_evolution(w_df, outdir):
         sub = w_df[w_df["allocator"] == aname].sort_values("step")
         steps = sub["step"].values
         weights = sub[agent_cols].values
+        # Weights at step t correspond to the decision taken at bar
+        # warmup+t — i.e. the same date as the t-th equity entry.
+        x = _x_for(len(steps), dates)
 
         ax.stackplot(
-            steps, *weights.T,
+            x, *weights.T,
             labels=[_label_for(a) for a in agent_names],
             colors=[AGENT_COLORS.get(a, "#999") for a in agent_names],
             alpha=0.82)
 
         # Sentiment tinting: green when aggressive > conservative, red opposite.
-        # Restored from plot_phase1.py — was silently dropped in plot_all.py.
         if len(agent_names) >= 2:
             w_agg = weights[:, 0]
             w_con = weights[:, -1]
             sentiment = w_agg - w_con
-            for i in range(len(steps) - 1):
+            for i in range(len(x) - 1):
                 s = sentiment[i]
                 if abs(s) > 0.02:
                     c = "#2ECC71" if s > 0 else "#E74C3C"
                     a = min(abs(float(s)) * 0.3, 0.15)
-                    ax.axvspan(steps[i], steps[i + 1], color=c,
+                    ax.axvspan(x[i], x[i + 1], color=c,
                                alpha=a, lw=0, zorder=0)
 
         ax.set_ylabel("Weight")
@@ -559,7 +608,8 @@ def plot_p1_weight_evolution(w_df, outdir):
         ax.set_title(P1_LABELS.get(aname, aname), fontsize=10)
         ax.grid(True, alpha=0.3)
 
-    axes[-1].set_xlabel("Step")
+    axes[-1].set_xlabel(_xlabel(dates))
+    _format_date_axis(axes[-1], dates, fig)
     handles, labels = axes[0].get_legend_handles_labels()
     axes[0].legend(handles, labels, loc="upper right",
                    fontsize=7.5, ncol=len(agent_names))
@@ -571,7 +621,7 @@ def plot_p1_weight_evolution(w_df, outdir):
     _save(fig, outdir, "p1_weight_evolution.png")
 
 
-def plot_p1_actions_on_price(act_df, eq_df, outdir, prices=None):
+def plot_p1_actions_on_price(act_df, eq_df, outdir, prices=None, dates=None):
     """
     Top: actual prices (yfinance) when available, else equity proxy.
     Bottom: blended action per allocator.
@@ -581,20 +631,21 @@ def plot_p1_actions_on_price(act_df, eq_df, outdir, prices=None):
         gridspec_kw={"height_ratios": [2, 1]})
 
     allocs = _p1_alloc_names(eq_df)
-    steps = eq_df["step"].values
+    n_eq = len(eq_df)
+    x_eq = _x_for(n_eq, dates)
 
-    if prices is not None and len(prices) >= len(steps):
-        px = prices.values[:len(steps)]
-        ax_price.plot(steps, px, color="#2C3E50", lw=1.1, alpha=0.85,
+    if prices is not None and len(prices) >= n_eq:
+        px = prices.values[:n_eq]
+        ax_price.plot(x_eq, px, color="#2C3E50", lw=1.1, alpha=0.85,
                       label="Price")
         ax_price.set_ylabel("Price")
         ax_price.set_title("Phase 1 — Blended Action on Price", pad=10)
     else:
         if prices is not None:
-            print(f"  [warn] prices length {len(prices)} < steps {len(steps)} — "
+            print(f"  [warn] prices length {len(prices)} < bars {n_eq} — "
                   "falling back to equity proxy")
         if allocs:
-            ax_price.plot(steps, eq_df[allocs[0]].values,
+            ax_price.plot(x_eq, eq_df[allocs[0]].values,
                           color="#2C3E50", lw=1.0, alpha=0.7,
                           label="Equity proxy")
         ax_price.set_ylabel("Equity (proxy)")
@@ -602,7 +653,7 @@ def plot_p1_actions_on_price(act_df, eq_df, outdir, prices=None):
                            pad=10)
 
     if "buy_and_hold" in eq_df.columns and prices is None:
-        ax_price.plot(steps, eq_df["buy_and_hold"].values,
+        ax_price.plot(x_eq, eq_df["buy_and_hold"].values,
                       color=P1_COLORS["buy_and_hold"],
                       lw=0.8, ls="--", alpha=0.5, label="Buy & Hold")
 
@@ -611,17 +662,20 @@ def plot_p1_actions_on_price(act_df, eq_df, outdir, prices=None):
 
     for aname in allocs:
         sub = act_df[act_df["allocator"] == aname]
-        ax_act.plot(sub["step"].values, sub["blended_action"].values,
+        n_act = len(sub)
+        x_act = _x_for(n_act, dates)
+        ax_act.plot(x_act, sub["blended_action"].values,
                     color=P1_COLORS.get(aname, "#566573"),
                     lw=0.8, alpha=0.85,
                     label=P1_LABELS.get(aname, aname))
 
     ax_act.set_ylabel("Blended Action")
-    ax_act.set_xlabel("Step")
+    ax_act.set_xlabel(_xlabel(dates))
     ax_act.set_ylim(-1.15, 1.15)
     ax_act.axhline(0, color="#BDC3C7", lw=0.8, ls=":")
     ax_act.legend(loc="best", fontsize=8)
     ax_act.grid(True)
+    _format_date_axis(ax_act, dates, fig)
 
     fig.tight_layout()
     _watermark(fig)
@@ -682,51 +736,54 @@ def plot_p1_metrics_bar(eq_df, m_df, outdir, ann):
 #  Combined plots
 # ═══════════════════════════════════════════════════════════════════
 
-def plot_combined_equity(p0_df, p1_eq_df, outdir):
+def plot_combined_equity(p0_df, p1_eq_df, outdir, dates=None):
     """Both panels rebased to 100 — fixes the p0=100 / p1=raw mismatch."""
     fig, (ax0, ax1) = plt.subplots(
         1, 2, figsize=(16, 5.5),
         gridspec_kw={"width_ratios": [1, 1], "wspace": 0.25})
 
     # p0_df is already rebased to 100 by _load_p0
+    x0 = _x_for(p0_df, dates)
     for name in p0_df.columns:
         lw = 1.5 if name == "buy_&_hold" else 1.2
         ls = "--" if name == "buy_&_hold" else "-"
         alpha = 0.6 if name == "buy_&_hold" else 0.9
-        ax0.plot(p0_df[name].values, color=_color_for(name),
+        ax0.plot(x0, p0_df[name].values, color=_color_for(name),
                  lw=lw, ls=ls, alpha=alpha, label=_label_for(name))
     ax0.axhline(100, color="#BDC3C7", lw=0.6, ls=":")
     ax0.set_ylabel("Indexed Equity (start=100)")
-    ax0.set_xlabel("Step")
+    ax0.set_xlabel(_xlabel(dates))
     ax0.set_title("Phase 0 — Individual Agents", fontsize=11, pad=10)
     ax0.legend(loc="upper left", fontsize=7.5)
     ax0.grid(True)
+    _format_date_axis(ax0, dates[:len(p0_df)] if dates is not None else None)
 
     # Rebase Phase 1 to 100 for visual consistency.
+    x1 = _x_for(p1_eq_df, dates)
     allocs = _p1_alloc_names(p1_eq_df)
     for aname in allocs:
         eq = p1_eq_df[aname].values
-        ax1.plot(p1_eq_df["step"], eq / eq[0] * 100,
+        ax1.plot(x1, eq / eq[0] * 100,
                  color=P1_COLORS.get(aname, "#566573"),
                  lw=1.5, label=P1_LABELS.get(aname, aname))
     if "buy_and_hold" in p1_eq_df.columns:
         eq_bh = p1_eq_df["buy_and_hold"].values
-        ax1.plot(p1_eq_df["step"], eq_bh / eq_bh[0] * 100,
+        ax1.plot(x1, eq_bh / eq_bh[0] * 100,
                  color=P1_COLORS["buy_and_hold"],
                  lw=1.3, ls="--", alpha=0.65, label="Buy & Hold")
     ax1.axhline(100, color="#BDC3C7", lw=0.6, ls=":")
-    ax1.set_xlabel("Step")
+    ax1.set_xlabel(_xlabel(dates))
     ax1.set_ylabel("Indexed Equity (start=100)")
     ax1.set_title("Phase 1 — Meta-Controlled Allocators", fontsize=11, pad=10)
     ax1.legend(loc="upper left", fontsize=7.5)
     ax1.grid(True)
+    _format_date_axis(ax1, dates[:len(p1_eq_df)] if dates is not None else None)
+
+    if dates is not None:
+        fig.autofmt_xdate(rotation=30, ha="right")
 
     fig.suptitle("Equity Comparison — Phase 0 vs Phase 1",
                  fontsize=13, fontweight="bold", y=1.02)
-    fig.text(0.5, -0.02,
-             "Note: Panels may reflect different test periods. Both equity "
-             "series rebased to 100 for visual comparability.",
-             ha="center", fontsize=7, color="#95A5A6", style="italic")
     fig.tight_layout()
     _watermark(fig)
     _save(fig, outdir, "combined_equity.png")
@@ -900,31 +957,34 @@ def _detect_trades(pos, threshold=0.1):
     return buys, sells, flips
 
 
-def _signals_panel(ax, px, pos, name, color):
+def _signals_panel(ax, px, pos, name, color, dates=None):
     n = min(len(px), len(pos))
     px, pos = px[:n], pos[:n]
-    xs = np.arange(n)
+    if dates is not None and len(dates) >= n:
+        xs = np.asarray(pd.to_datetime(dates[:n]))
+    else:
+        xs = np.arange(n)
 
     ax.plot(xs, px, color="#2C3E50", lw=1.0, alpha=0.85, zorder=2)
 
     for i in range(n - 1):
         p = pos[i]
         if p > 0.05:
-            ax.axvspan(i, i + 1, alpha=min(p * 0.18, 0.18),
+            ax.axvspan(xs[i], xs[i + 1], alpha=min(p * 0.18, 0.18),
                        color="#3498DB", lw=0)
         elif p < -0.05:
-            ax.axvspan(i, i + 1, alpha=min(-p * 0.18, 0.18),
+            ax.axvspan(xs[i], xs[i + 1], alpha=min(-p * 0.18, 0.18),
                        color="#E74C3C", lw=0)
 
     buys, sells, flips = _detect_trades(pos)
     if buys:
-        ax.scatter(buys, px[buys], marker="^", color=SIGNAL_BUY,
+        ax.scatter(xs[buys], px[buys], marker="^", color=SIGNAL_BUY,
                    s=45, zorder=5, lw=0)
     if sells:
-        ax.scatter(sells, px[sells], marker="v", color=SIGNAL_SELL,
+        ax.scatter(xs[sells], px[sells], marker="v", color=SIGNAL_SELL,
                    s=45, zorder=5, lw=0)
     if flips:
-        ax.scatter(flips, px[flips], marker="D", color=SIGNAL_FLIP,
+        ax.scatter(xs[flips], px[flips], marker="D", color=SIGNAL_FLIP,
                    s=28, zorder=5, lw=0)
 
     ax2 = ax.twinx()
@@ -985,6 +1045,7 @@ def plot_signals(prices, modeldir, outdir, interval, ticker, start, end,
     if len(signal_agents) == 1:
         axes = [axes]
 
+    last_dates = None
     for ax, name in zip(axes, signal_agents):
         try:
             lam = AGENT_PRESETS[name]
@@ -995,8 +1056,12 @@ def plot_signals(prices, modeldir, outdir, interval, ticker, start, end,
             pos, warmup = _rollout_positions(
                 model, prices, lam, ann, cnn_model_path)
             px_plot = prices.values[warmup:]
+            panel_dates = prices.index[warmup:]
+            last_dates = panel_dates
             color = AGENT_COLORS.get(name, _color_for(name))
-            _signals_panel(ax, px_plot, pos, name, color)
+            _signals_panel(ax, px_plot, pos, name, color,
+                           dates=panel_dates)
+            _format_date_axis(ax, panel_dates)
         except Exception as e:
             ax.set_title(f"{_label_for(name)} — error: {e}")
             print(f"  [err] {name}: {e}")
@@ -1005,6 +1070,8 @@ def plot_signals(prices, modeldir, outdir, interval, ticker, start, end,
         f"{ticker}  {start} → {end}  |  "
         "blue=long · red=short · ▲buy · ▼sell · ◆flip",
         fontsize=10, y=1.005)
+    if last_dates is not None:
+        fig.autofmt_xdate(rotation=30, ha="right")
     fig.tight_layout()
     _watermark(fig)
     _save(fig, outdir, "signals.png")
@@ -1095,15 +1162,25 @@ def main():
     p1_m  = _load_p1_metrics(args.datadir)
     r_df  = _load_regime_table(args.datadir)
 
-    # Load prices once if we'll need them.
-    needs_prices = any(p in requested for p in
-                       ("signals", "p1_actions_on_price"))
+
+    time_series_plots = {
+        "p0_equity", "p0_drawdown", "p0_rolling_sharpe",
+        "p1_equity", "p1_drawdown", "p1_rolling_sharpe",
+        "p1_weight_evolution", "p1_actions_on_price",
+        "combined_equity", "signals",
+    }
+    needs_prices = bool(set(requested) & time_series_plots)
     prices = None
     if needs_prices:
         prices = _load_prices(args.ticker, args.test_start, args.test_end,
                               args.interval, args.cache_dir)
 
-    # CNN path (signals only — currently unused but keep wiring in place)
+    p0_dates = (_make_date_index(prices, len(p0_df), args.interval)
+                if p0_df is not None else None)
+    p1_dates = (_make_date_index(prices, len(p1_eq), args.interval)
+                if p1_eq is not None else None)
+
+ 
     cnn_path = None
     if not args.no_cnn:
         candidate = os.path.join(args.modeldir, "models", "cnn_features",
@@ -1111,7 +1188,7 @@ def main():
         if os.path.isfile(candidate):
             cnn_path = candidate
 
-    # ── Dispatch table ────────────────────────────────────────────
+    # ── Dispatch table ───────────────────
     def _need(name, *required):
         if name not in requested:
             return False
@@ -1122,31 +1199,33 @@ def main():
         return True
 
     if _need("p0_equity", p0_df):
-        plot_p0_equity(p0_df, outdir, ann)
+        plot_p0_equity(p0_df, outdir, ann, dates=p0_dates)
     if _need("p0_drawdown", p0_df):
-        plot_p0_drawdown(p0_df, outdir)
+        plot_p0_drawdown(p0_df, outdir, dates=p0_dates)
     if _need("p0_rolling_sharpe", p0_df):
-        plot_p0_rolling_sharpe(p0_df, outdir, ann)
+        plot_p0_rolling_sharpe(p0_df, outdir, ann, dates=p0_dates)
     if _need("p0_return_dist", p0_df):
         plot_p0_return_dist(p0_df, outdir)
     if _need("p0_metrics_bar", p0_df):
         plot_p0_metrics_bar(p0_df, outdir, ann)
 
     if _need("p1_equity", p1_eq):
-        plot_p1_equity(p1_eq, outdir)
+        plot_p1_equity(p1_eq, outdir, dates=p1_dates)
     if _need("p1_drawdown", p1_eq):
-        plot_p1_drawdown(p1_eq, outdir)
+        plot_p1_drawdown(p1_eq, outdir, dates=p1_dates)
     if _need("p1_rolling_sharpe", p1_eq):
-        plot_p1_rolling_sharpe(p1_eq, outdir, ann)
+        plot_p1_rolling_sharpe(p1_eq, outdir, ann, dates=p1_dates)
     if _need("p1_weight_evolution", p1_w):
-        plot_p1_weight_evolution(p1_w, outdir)
+        plot_p1_weight_evolution(p1_w, outdir, dates=p1_dates)
     if _need("p1_actions_on_price", p1_a, p1_eq):
-        plot_p1_actions_on_price(p1_a, p1_eq, outdir, prices=prices)
+        plot_p1_actions_on_price(p1_a, p1_eq, outdir, prices=prices,
+                                 dates=p1_dates)
     if _need("p1_metrics_bar", p1_eq):
         plot_p1_metrics_bar(p1_eq, p1_m, outdir, ann)
 
     if _need("combined_equity", p0_df, p1_eq):
-        plot_combined_equity(p0_df, p1_eq, outdir)
+        combined_dates = p0_dates if p0_dates is not None else p1_dates
+        plot_combined_equity(p0_df, p1_eq, outdir, dates=combined_dates)
     if _need("combined_sharpe_bar", p0_df, p1_eq):
         plot_combined_sharpe_bar(p0_df, p1_eq, outdir, ann, ann)
     if _need("combined_metrics_table", p0_df, p1_eq):
