@@ -1,18 +1,6 @@
 """
 Pre-train PricePatternCNN on a binary direction-prediction task.
 
-The CNN learns to predict whether the 20-bar forward return is positive,
-using a vol-normalized window of recent log returns as input. The 3-dim
-latent bottleneck is then used as observation features for the RL agents.
-
-Data leakage prevention:
-  Full data:    |======== TRAIN (80%) ========|=== EVAL (20%) ===|
-  CNN training: |=== CNN_TRAIN (70%) ===|= CNN_VAL (30%) =|
-  RL agents see the full TRAIN split with frozen CNN features.
-
-Usage:
-  python pretrain_cnn.py --ticker SPY --start 2024-04-01 --end 2025-10-31
-  python train_agents.py --ticker SPY --start 2024-04-01 --end 2025-10-31
 """
 import argparse
 import json
