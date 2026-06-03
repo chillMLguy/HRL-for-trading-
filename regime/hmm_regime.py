@@ -130,6 +130,57 @@ class HMMRegimeDetector:
             raise RuntimeError("Model not fitted. Call fit() first.")
         return self.model.predict_proba(self._transform(observations))
 
+    def filtered_proba(self, observations):
+        """
+        Forward-only *filtered* posteriors  P(state_t | o_1 … o_t).
+
+        Unlike ``predict_proba`` (which runs the full forward–backward pass and
+        therefore returns *smoothed* posteriors that peek at future
+        observations), this performs a single forward pass, so row ``t`` uses
+        only information available up to and including ``t`` — no look-ahead.
+
+        This is the causal quantity needed by the Phase 2 meta-agent: it can be
+        precomputed once for an entire price series and indexed in O(1) per
+        step, and it matches ``predict_proba(obs[:t+1])[-1]`` exactly (verified
+        to machine precision) while costing O(T·K²) for the whole sequence
+        instead of O(T²·K²).
+
+        Returns array of shape (T, n_states); each row sums to 1.
+        """
+        if self.model is None:
+            raise RuntimeError("Model not fitted. Call fit() first.")
+
+        from scipy.stats import multivariate_normal
+        from scipy.special import logsumexp
+
+        X = self._transform(np.asarray(observations, dtype=np.float64))
+        m = self.model
+        K = self.n_states
+        T = len(X)
+
+        # Emission log-likelihoods log P(o_t | state=k). hmmlearn's covars_
+        # property always exposes full (K, n_feat, n_feat) matrices; guard the
+        # diag-storage case anyway for robustness across versions.
+        covars = np.asarray(m.covars_)
+        log_b = np.empty((T, K), dtype=np.float64)
+        for k in range(K):
+            cov_k = covars[k] if covars.ndim == 3 else np.diag(covars[k])
+            log_b[:, k] = multivariate_normal.logpdf(
+                X, mean=m.means_[k], cov=cov_k, allow_singular=True)
+
+        log_pi = np.log(m.startprob_ + 1e-300)
+        log_A = np.log(m.transmat_ + 1e-300)
+
+        log_alpha = np.empty((T, K), dtype=np.float64)
+        log_alpha[0] = log_pi + log_b[0]
+        for t in range(1, T):
+            # log α_t(j) = log b_t(j) + logΣ_i α_{t-1}(i) · A_{ij}
+            log_alpha[t] = log_b[t] + logsumexp(
+                log_alpha[t - 1][:, None] + log_A, axis=0)
+
+        # Normalise each timestep to a proper posterior.
+        return np.exp(log_alpha - logsumexp(log_alpha, axis=1, keepdims=True))
+
     def decode(self, observations):
         """
         Viterbi decoding — for visualisation / analysis only.

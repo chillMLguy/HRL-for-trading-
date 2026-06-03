@@ -1,0 +1,29 @@
+{
+  "ticker": "^DJI",
+  "train_start": "2011-01-01",
+  "train_end": "2021-12-31",
+  "interval": "1d",
+  "bars_per_year": 252,
+  "cost_pct": 0.0005,
+  "seed": 42,
+  "timesteps": 300000,
+  "net_arch": [
+    256,
+    256
+  ],
+  "lam_meta": 0.5,
+  "alpha": 0.05,
+  "beta": 0.05,
+  "dd_free": 0.03,
+  "dd_max": 0.1,
+  "logit_scale": 2.0,
+  "perf_window": 20,
+  "use_hmm": true,
+  "use_cnn": false,
+  "agent_order": [
+    "aggressive",
+    "balanced",
+    "conservative"
+  ],
+  "obs_dim": 21
+}
