@@ -20,11 +20,11 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import numpy as np
-import yfinance as yf
 
 from env.trading_env import AGENT_PRESETS
 from regime.hmm_regime import HMMRegimeDetector
 from regime.allocators import VolatilityRegimeAllocator, AGENT_ORDER
+from common.data import load_prices
 import config
 
 
@@ -53,6 +53,8 @@ def main():
                              "reporting.")
     parser.add_argument("--no_scaler",   action="store_true",
                         help="Skip StandardScaler on HMM observations.")
+    parser.add_argument("--data_csv",    default=None,
+                        help="Local price cache CSV (see download_data.py)")
     args = parser.parse_args()
 
     ann = BARS_PER_YEAR[args.interval]
@@ -65,12 +67,8 @@ def main():
           f"{args.train_start} → {args.train_end}")
     print(f"{'='*60}")
 
-    print(f"\n  Downloading {args.ticker} ...")
-    df = yf.download(args.ticker, start=args.train_start,
-                     end=args.train_end, interval=args.interval,
-                     auto_adjust=True, progress=False)
-    prices = df["Close"].squeeze().dropna()
-    print(f"  {len(prices)} bars loaded.")
+    prices = load_prices(args.ticker, args.train_start, args.train_end,
+                         args.interval, data_csv=args.data_csv)
 
     # ── 2. Verify Phase 0 models exist ────────────────────────────
     print(f"\n  Checking Phase 0 models ...")
@@ -146,7 +144,7 @@ def main():
         "n_states": args.n_states,
         "seed": args.seed,
         "n_train_bars": len(prices),
-        "agent_presets": {k: float(v) for k, v in AGENT_PRESETS.items()},
+        "agent_presets": AGENT_PRESETS,
         "agent_order": AGENT_ORDER,
     }
     cfg_path = os.path.join(out_dir, "config.json")

@@ -1,0 +1,20 @@
+{
+  "agent": "aggressive",
+  "preset": {
+    "lam_var": 2.0,
+    "max_pos": 1.0,
+    "dd_free": 0.04,
+    "dd_max": 0.2
+  },
+  "seed": 42,
+  "timesteps": 500000,
+  "net_arch": [
+    256,
+    256
+  ],
+  "cost_pct": 0.0002,
+  "bars_per_year": 252,
+  "episode_bars": 504,
+  "reward": "quadratic_utility+dd_zones",
+  "best_val_sharpe": 0.8403777085377124
+}

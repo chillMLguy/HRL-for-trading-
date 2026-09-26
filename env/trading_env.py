@@ -2,82 +2,74 @@
 Observation space (20 features):
 
   MARKET — Momentum:
-  [0]  ret_5         — ~1-week rolling return  
+  [0]  ret_5         — ~1-week rolling return
   [1]  ret_10        — ~2-week rolling return
   [2]  ret_20        — ~1-month rolling return
-  [3]  ret_60        — ~3-month rolling return            
+  [3]  ret_60        — ~3-month rolling return
 
   MARKET — Volatility:
   [4]  vol_10        — ~2-week realized volatility (annualized)
   [5]  vol_20        — ~1-month realized volatility (annualized)
-  [6]  vol_60        — ~3-month realized volatility (annualized) (
+  [6]  vol_60        — ~3-month realized volatility (annualized)
   [7]  vol_ratio     — vol_10 / vol_20  (vol regime signal)
 
   MARKET — Higher-order statistics:
   [8]  rsi_14        — RSI(~14 days), scaled to [-1, 1]
-  [9]  skew_20       — rolling skewness over ~1 month          
+  [9]  skew_20       — rolling skewness over ~1 month
   [10] kurt_20       — rolling excess kurtosis, clipped [-2, 10]
   [11] zscore_20     — price z-score over ~1 month, clipped [-4, 4]
-  [12] autocorr_20   — rolling lag-1 autocorrelation ~1 month    
+  [12] autocorr_20   — rolling lag-1 autocorrelation ~1 month
 
   PORTFOLIO STATE:
-  [13] position      — current position in [-1, 1]
+  [13] position      — current position (in units of max long = 1)
   [14] unreal_pnl    — unrealized PnL, normalized
   [15] time_in_trade — bars held / max_hold, in [0, 1]
   [16] drawdown      — current drawdown from peak equity
 
-  CNN PATTERN FEATURES (Axis E — optional, zeros if no CNN model):
-  [17] cnn_feat_0    — CNN latent dimension 0
-  [18] cnn_feat_1    — CNN latent dimension 1
-  [19] cnn_feat_2    — CNN latent dimension 2
+  CNN PATTERN FEATURES (optional, zeros if no CNN model):
+  [17..19] cnn_feat_0..2
 
+Action space: continuous [-1, 1], scaled internally by `max_pos`
+  (per-agent hard exposure cap — part of the R4 risk ladder).
 
-Action space: continuous [-1, 1]
-  -1 = full short, 0 = flat, +1 = full long
-  Intermediate values = fractional positions
+Reward function (F5/R4 — Ritter-2017 per-step quadratic utility + drawdown zones):
 
-Reward function :
-  r_t = net_ret / vol_scale  -  λ * (dd_dev + dd_penalty)
+    r_t = REWARD_SCALE · (net_ret_t − ½·lam_var·net_ret_t²)  −  dd_penalty_t
 
-  λ controls risk aversion on a smooth spectrum:
-    λ = 0.0  → aggressive
-    λ = 0.25 → growth
-    λ = 0.75 → balanced
-    λ = 1.5  → conservative
-    λ = 3.0  → ultra-conservative
+  * net_ret_t = position_t · simple_ret_{t→t+1} − cost_t   (F1: the reward of
+    step t is the PnL of the action taken at step t — no one-step credit lag)
+  * lam_var sets risk aversion: optimal size ≈ μ/(lam_var·σ²), so the λ-spectrum
+    now genuinely differentiates position sizes (the old reward divided returns
+    by the agent's own downside deviation, which is scale-invariant in position
+    size — all agents traded ~the same size).
+  * dd_penalty: 0 below dd_free, quadratic in (dd_free, dd_max), 1 + episode
+    termination above dd_max (training only).  dd zones are per-agent.
+
+PnL uses SIMPLE returns (F4) so a full-long agent exactly replicates
+buy-and-hold; log returns remain the basis of all features.
 """
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
-
-# Named presets for convenience (maps name → lambda value)
-AGENT_PRESETS = {
-    "aggressive": 0.0,
-    "balanced": 0.75,
-    "conservative": 1.5,
-}
+from config import AGENT_PRESETS, REWARD_SCALE  # re-exported for other modules
 
 N_OBS = 20  # total observation features
 
 # Defaults for env-internal lookbacks. Both are scaled by the per-frequency
 # factor inside TradingEnv (×1 for daily, ×6 for 1h, etc.).
 DEFAULT_WARMUP_BARS = 60   # bars before trading can start (need rolling stats)
-DEFAULT_BUFFER_BARS = 50   # ring buffer length for the reward statistics
+DEFAULT_MAX_HOLD    = 60   # normalisation for the time_in_trade feature (F12:
+                           # was 390 — an intraday leftover that pinned the
+                           # feature near zero on daily bars)
 
 
 def _precompute_features(returns: np.ndarray,
-                         bars_per_year: int = 1638,
+                         bars_per_year: int = 252,
                          cnn_model_path: str = None) -> dict:
     """
-    Compute every rolling feature once.
+    Compute every rolling feature once (from LOG returns).
     Arrays have size N = n+1 so index t is always valid up to t=n.
-
-    Parameters
-    ----------
-    returns        : 1-D array of log returns
-    bars_per_year  : 252 for daily, 1638 for 1h
-    cnn_model_path : path to pre-trained CNN .pt file (optional)
     """
     n     = len(returns)
     N     = n + 1
@@ -89,8 +81,6 @@ def _precompute_features(returns: np.ndarray,
     w20 = 20 * scale   # ~1 month
     w60 = 60 * scale   # ~3 months
     w14 = 14 * scale   # RSI period (~14 trading days)
-
-    # ── Allocate arrays ──────────────────────────────────────────
 
     ret_5      = np.empty(N, dtype=np.float32)
     ret_10     = np.empty(N, dtype=np.float32)
@@ -106,8 +96,6 @@ def _precompute_features(returns: np.ndarray,
     autocorr_20 = np.empty(N, dtype=np.float32)
 
     cum = np.concatenate([[0.0], np.cumsum(returns)]).astype(np.float32)
-
-    # ── Main feature loop ────────────────────────────────────────
 
     for t in range(N):
         tc = min(t, n)
@@ -137,7 +125,7 @@ def _precompute_features(returns: np.ndarray,
             al = losses.mean() if len(losses) > 0 else 1e-8
             rsi_14[t] = np.float32((100.0 / (1.0 + ag / al)) / 50.0 - 1.0)
 
-        # ── Axis A: Skewness & Kurtosis (w20 window) ────────────
+        # Skewness & Kurtosis (w20 window)
         w_20 = returns[max(0, tc - w20): tc]
         if len(w_20) >= 3:
             m = w_20.mean()
@@ -162,7 +150,7 @@ def _precompute_features(returns: np.ndarray,
         else:
             kurt_20[t] = 0.0
 
-        # ── Axis B: Z-score (w20 window) ────────────────────────
+        # Z-score (w20 window)
         if len(w_20) >= 5:
             cum_ret = w_20.sum()
             s = w_20.std() * np.sqrt(len(w_20))
@@ -171,7 +159,7 @@ def _precompute_features(returns: np.ndarray,
         else:
             zscore_20[t] = 0.0
 
-        # ── Axis C: Lag-1 autocorrelation (w20 window) ──────────
+        # Lag-1 autocorrelation (w20 window)
         if len(w_20) >= 5:
             r1 = w_20[:-1]
             r2 = w_20[1:]
@@ -185,12 +173,11 @@ def _precompute_features(returns: np.ndarray,
         else:
             autocorr_20[t] = 0.0
 
-    # ── Vol ratio ────────────────────────────────────────────────
     with np.errstate(invalid="ignore", divide="ignore"):
         vol_ratio = np.where(vol_20 > 1e-8, vol_10 / vol_20,
                              np.float32(1.0))
 
-    # ── Axis E: CNN features ──────────────────────────
+    # CNN features (optional)
     cnn_feat_0 = np.zeros(N, dtype=np.float32)
     cnn_feat_1 = np.zeros(N, dtype=np.float32)
     cnn_feat_2 = np.zeros(N, dtype=np.float32)
@@ -219,14 +206,12 @@ def _precompute_features(returns: np.ndarray,
                                              weights_only=True))
             model.eval()
 
-            # Batch-extract CNN features for all valid timesteps
             inputs = []
             valid_indices = []
             for t in range(N):
                 tc = min(t, n)
                 if tc >= w_cnn:
                     window = returns[tc - w_cnn: tc].copy()
-                    # Vol-normalize the window
                     v = vol_20[t]
                     if v > 1e-6:
                         window = window / (v / ANN)  # undo annualization
@@ -274,17 +259,22 @@ class TradingEnv(gym.Env):
     Parameters
     ----------
     prices          : pd.Series or np.ndarray of close prices
-    lam             : float — risk aversion parameter (λ). 
-    bars_per_year   : 252 for daily, 1638 for 1h; drives ANN factor & lookback scaling
-    cost_pct        : one-way transaction cost (default 0.01% — realistic for intraday)
-    max_hold        : normalisation for time_in_trade feature
-    initial_capital : starting equity
-    dd_free         : drawdown level below which no penalty applies (default 3%)
-    dd_max          : drawdown level at which episode terminates (default 15%)
-    buf_size        : rolling window length for reward statistics
-                      (auto-scaled by bar frequency if left at 0)
-    eval_mode       : if True, drawdown does NOT terminate the episode (for full equity curves)
-    cnn_model_path  : path to pre-trained CNN .pt file (optional, None = no CNN features)
+    lam_var         : float — variance-aversion λ in the quadratic-utility
+                      reward (R4).  0 = pure return (execution env).
+    max_pos         : float — hard cap on |position| (per-agent ladder, R4).
+                      May exceed 1 for the meta execution env when the
+                      vol-target overlay is allowed to lever up (R2).
+    bars_per_year   : 252 for daily, 1638 for 1h
+    cost_pct        : one-way transaction cost
+    dd_free, dd_max : drawdown penalty zones; > dd_max terminates (training)
+    reward_scale    : multiplies the utility term (SAC reward-scale hygiene)
+    start_index     : first bar at which trading may start (F8 warm windows).
+                      Features/HMM history before it are used but not traded.
+    train_episode_bars : if > 0 and not eval_mode, each episode is a random
+                      window of this many bars (F11).  0 = full path.
+    eval_mode       : if True — full path from start_index, no dd termination
+    preset          : optional name from config.AGENT_PRESETS — fills
+                      lam_var / max_pos / dd_free / dd_max in one go.
     """
 
     metadata = {"render_modes": []}
@@ -292,44 +282,56 @@ class TradingEnv(gym.Env):
     def __init__(
         self,
         prices,
-        lam:             float = 0.75,
-        bars_per_year:   int   = 1638,
+        lam_var:         float = 12.0,
+        max_pos:         float = 1.0,
+        bars_per_year:   int   = 252,
         cost_pct:        float = 0.0002,
-        max_hold:        int   = 390,
+        max_hold:        int   = DEFAULT_MAX_HOLD,
         initial_capital: float = 1.0,
         dd_free:         float = 0.03,
         dd_max:          float = 0.15,
-        buf_size:        int   = 0,
+        reward_scale:    float = REWARD_SCALE,
         eval_mode:       bool  = False,
         cnn_model_path:  str   = None,
+        start_index:     int   = None,
+        train_episode_bars: int = 0,
+        preset:          str   = None,
     ):
         super().__init__()
 
+        if preset is not None:
+            p = AGENT_PRESETS[preset]
+            lam_var, max_pos = p["lam_var"], p["max_pos"]
+            dd_free, dd_max  = p["dd_free"], p["dd_max"]
+
         arr = prices.values if hasattr(prices, "values") else np.asarray(prices)
-        self.returns   = np.diff(np.log(arr)).astype(np.float32)
-        self.n_bars    = len(arr)
-        self._feat     = _precompute_features(self.returns, bars_per_year,
-                                              cnn_model_path)
+        arr = np.asarray(arr, dtype=np.float64)
+        self.n_bars = len(arr)
+        # Log returns drive the FEATURES; simple returns drive the PnL (F4).
+        self.returns        = np.diff(np.log(arr)).astype(np.float32)
+        self.simple_returns = (arr[1:] / arr[:-1] - 1.0).astype(np.float32)
+        self._feat = _precompute_features(self.returns, bars_per_year,
+                                          cnn_model_path)
 
         scale = self._feat["_scale"]
 
-        self.lam             = np.float32(lam)
+        self.lam_var         = np.float32(lam_var)
+        self.max_pos         = np.float32(max_pos)
         self.cost_pct        = np.float32(cost_pct)
-        self.max_hold        = max_hold
+        self.max_hold        = max_hold * scale
         self.initial_capital = np.float32(initial_capital)
         self.dd_free         = np.float32(dd_free)
         self.dd_max          = np.float32(dd_max)
         self.dd_range        = np.float32(dd_max - dd_free)
+        self.reward_scale    = np.float32(reward_scale)
         self.eval_mode       = eval_mode
         self.warmup          = DEFAULT_WARMUP_BARS * scale
+        self.start_index     = max(self.warmup,
+                                   start_index if start_index is not None else 0)
+        self.train_episode_bars = int(train_episode_bars)
 
-        _buf_size = buf_size if buf_size > 0 else DEFAULT_BUFFER_BARS * scale
-        self.buf_size = _buf_size
-
-        # Ring buffer stores vol-normalized returns
-        self._rbuf   = np.zeros(_buf_size, dtype=np.float32)
-        self._rbuf_i = 0
-        self._rbuf_n = 0
+        if self.start_index >= self.n_bars - 2:
+            raise ValueError("start_index leaves no bars to trade")
 
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(N_OBS,), dtype=np.float32)
@@ -338,41 +340,52 @@ class TradingEnv(gym.Env):
             shape=(1,), dtype=np.float32)
 
         self.t = self.position = self.equity = None
-        self.peak_equity = self.trade_start = None
+        self.peak_equity = self.trade_start = self._ep_end = None
 
-
+    # ── Gym API ────────────────────────────────────────────────────
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        self.t           = self.warmup
+        t0     = self.start_index
+        ep_end = self.n_bars - 1          # last valid t is n_bars-2 (uses ret[t])
+
+        # F11: random-start episodes during training
+        if (not self.eval_mode) and self.train_episode_bars > 0:
+            max_start = self.n_bars - 2 - self.train_episode_bars
+            if max_start > t0:
+                t0 = int(self.np_random.integers(t0, max_start + 1))
+            ep_end = min(ep_end, t0 + self.train_episode_bars)
+
+        self.t           = t0
+        self._ep_end     = ep_end
         self.position    = np.float32(0.0)
         self.equity      = self.initial_capital
         self.peak_equity = self.initial_capital
-        self.trade_start = self.warmup
-        self._rbuf[:]    = 0.0
-        self._rbuf_i     = 0
-        self._rbuf_n     = 0
+        self.trade_start = t0
         return self._get_obs(), {}
 
     def step(self, action):
-        action    = np.float32(np.clip(
+        # Action in [-1, 1] → position in [-max_pos, max_pos]
+        a = np.float32(np.clip(
             np.asarray(action, dtype=np.float32).flat[0], -1.0, 1.0))
+        target_pos = a * self.max_pos
+
         prev_pos  = self.position
-        cost      = abs(action - prev_pos) * self.cost_pct
-        price_ret = self.returns[self.t - 1]
-        net_ret   = np.float32(prev_pos * price_ret - cost)
+        cost      = abs(target_pos - prev_pos) * self.cost_pct
+        # F1: the position chosen NOW earns the return revealed on the next
+        # bar, and that PnL is the reward of THIS step (no one-step credit lag;
+        # the trade cost and its payoff sit in the same reward).
+        price_ret = self.simple_returns[self.t]
+        net_ret   = np.float32(target_pos * price_ret - cost)
 
         self.equity      *= np.float32(1.0 + net_ret)
         self.peak_equity  = max(self.peak_equity, self.equity)
-        self.position     = action
+        self.position     = target_pos
 
-        # Compute reward (includes ring buffer update)
-        reward, dd_terminated = self._compute_reward(net_ret)
+        reward, dd_penalty, dd_terminated = self._compute_reward(net_ret)
 
         self.t += 1
-        done = self.t >= self.n_bars - 1
-
-        # Hard drawdown termination (training only)
+        done = (self.t >= self._ep_end) or (self.t >= self.n_bars - 1)
         if dd_terminated and not self.eval_mode:
             done = True
 
@@ -380,110 +393,76 @@ class TradingEnv(gym.Env):
             self.trade_start = self.t
 
         info = {
-            "equity":   float(self.equity),
-            "position": float(self.position),
-            "net_ret":  float(net_ret),
-            "drawdown": float(self._current_drawdown()),
-            "lam":      float(self.lam),
+            "equity":     float(self.equity),
+            "position":   float(self.position),
+            "net_ret":    float(net_ret),
+            "price_ret":  float(price_ret),
+            "cost":       float(cost),
+            "drawdown":   float(self._current_drawdown()),
+            "dd_penalty": float(dd_penalty),
+            "lam_var":    float(self.lam_var),
         }
         if dd_terminated:
             info["terminated_by"] = "drawdown"
 
         return self._get_obs(), float(reward), done, False, info
 
-    # ── Unified reward function ────────────────────────────────────
+    # ── Reward (R4: quadratic utility + drawdown zones) ────────────
 
     def _compute_reward(self, net_ret):
-        """
-        Composite per-step reward used to train every agent.
+        utility = np.float32(net_ret - 0.5 * self.lam_var * net_ret * net_ret)
 
-            r_t = net_ret / vol_scale  -  λ · (dd_dev + dd_penalty)
-
-
-        Returns (reward, dd_terminated) where dd_terminated is True iff
-        drawdown exceeded dd_max on this step.
-        """
-        # 1. Store raw return in ring buffer
-        self._rbuf[self._rbuf_i] = np.float32(net_ret)
-        self._rbuf_i = (self._rbuf_i + 1) % self.buf_size
-        self._rbuf_n = min(self._rbuf_n + 1, self.buf_size)
-
-        # 2. Downside deviation from buffer (shared by Sortino scale + penalty)
-        buf = self._buf()
-        negative_returns = buf[buf < 0]
-        dd_dev = np.float32(negative_returns.std()) \
-            if len(negative_returns) >= 2 else np.float32(0.0)
-
-        # 3. Sortino-style scaling: divide return by downside deviation
-        #    Falls back to vol_20 when not enough history to estimate dd_dev.
-        if dd_dev > np.float32(1e-6):
-            sortino_scale = dd_dev
-        else:
-            sortino_scale = max(self._feat["vol_20"][self.t], np.float32(1e-6))
-        norm_ret = np.float32(net_ret / sortino_scale)
-
-        # 4. Quadratic drawdown penalty with zones (Component B)
         dd = self._current_drawdown()
         dd_terminated = False
-
         if dd < self.dd_free:
             dd_penalty = np.float32(0.0)
         elif dd < self.dd_max:
-            dd_penalty = np.float32(
-                ((dd - self.dd_free) / self.dd_range) ** 2)
+            dd_penalty = np.float32(((dd - self.dd_free) / self.dd_range) ** 2)
         else:
             dd_terminated = True
             dd_penalty = np.float32(1.0)
 
-        # 5. Combined reward
-        penalty = dd_dev + dd_penalty
-        reward  = float(norm_ret - self.lam * penalty)
-
-        return reward, dd_terminated
-
-    def _buf(self):
-        """Return valid portion of the ring buffer as a numpy array."""
-        return self._rbuf if self._rbuf_n == self.buf_size \
-               else self._rbuf[:self._rbuf_n]
+        reward = float(self.reward_scale * utility - dd_penalty)
+        return reward, dd_penalty, dd_terminated
 
     # ── Observation ────────────────────────────────────────────────
 
     def _get_obs(self):
+        return self.obs_with_book(self.position,
+                                  self.trade_start,
+                                  self._current_drawdown())
+
+    def obs_with_book(self, position, trade_start, drawdown):
+        """
+        Build the 20-feature observation at the current bar with an arbitrary
+        portfolio book (F3: lets frozen sub-agents see their OWN shadow book
+        instead of the blended portfolio's).
+        """
         t = self.t
         f = self._feat
-        cum_since = float(np.sum(self.returns[self.trade_start: t]))
+        cum_since = float(np.sum(self.returns[trade_start: t]))
         obs       = np.empty(N_OBS, dtype=np.float32)
 
-        # Market — Momentum
         obs[0]  = f["ret_5"][t]
         obs[1]  = f["ret_10"][t]
         obs[2]  = f["ret_20"][t]
         obs[3]  = f["ret_60"][t]
-
-        # Market — Volatility
         obs[4]  = f["vol_10"][t]
         obs[5]  = f["vol_20"][t]
         obs[6]  = f["vol_60"][t]
         obs[7]  = f["vol_ratio"][t]
-
-        # Market — Higher-order statistics
         obs[8]  = f["rsi"][t]
         obs[9]  = f["skew_20"][t]
         obs[10] = f["kurt_20"][t]
         obs[11] = f["zscore_20"][t]
         obs[12] = f["autocorr_20"][t]
-
-        # Portfolio state
-        obs[13] = self.position
-        obs[14] = self.position * np.float32(cum_since)
-        obs[15] = np.float32(min((t - self.trade_start) / self.max_hold, 1.0))
-        obs[16] = self._current_drawdown()
-
-        # CNN pattern features
+        obs[13] = np.float32(position)
+        obs[14] = np.float32(position * cum_since)
+        obs[15] = np.float32(min((t - trade_start) / self.max_hold, 1.0))
+        obs[16] = np.float32(drawdown)
         obs[17] = f["cnn_feat_0"][t]
         obs[18] = f["cnn_feat_1"][t]
         obs[19] = f["cnn_feat_2"][t]
-
         return obs
 
     # ── Helpers ────────────────────────────────────────────────────

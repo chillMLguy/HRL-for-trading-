@@ -1,32 +1,24 @@
 import argparse
+import json
 import os
 import warnings
 import multiprocessing as mp
 warnings.filterwarnings("ignore")
 
 import numpy as np
-import pandas as pd
-import yfinance as yf
 
 from stable_baselines3 import SAC
 from stable_baselines3.common.vec_env import DummyVecEnv
-from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.monitor import Monitor
 
-from env.trading_env import TradingEnv, AGENT_PRESETS
+from env.trading_env import TradingEnv
+from common.data import load_prices
+from common.callbacks import SharpeEvalCallback
+from config import AGENT_PRESETS
 import config
 
 
 BARS_PER_YEAR = config.BARS_PER_YEAR
-
-
-def download_data(ticker, start, end, interval="1h"):
-    print(f"  Downloading {ticker} {start} → {end} (interval={interval})...")
-    df = yf.download(ticker, start=start, end=end, interval=interval,
-                     auto_adjust=True, progress=False)
-    prices = df["Close"].squeeze().dropna()
-    print(f"  {len(prices)} bars loaded.")
-    return prices
 
 
 def train_split(prices, ratio=0.8):
@@ -34,46 +26,35 @@ def train_split(prices, ratio=0.8):
     return prices.iloc[:split], prices.iloc[split:]
 
 
-def make_env(prices, lam, bars_per_year=1638, cost_pct=0.0002,
-             cnn_model_path=None):
-    def _init():
-        return Monitor(TradingEnv(prices, lam=lam,
-                                  bars_per_year=bars_per_year,
-                                  cost_pct=cost_pct,
-                                  cnn_model_path=cnn_model_path))
-    return DummyVecEnv([_init])
-
-
 def _train_worker(args):
-    """
-    Top-level function (required for multiprocessing pickle).
-    Runs one agent training to completion and returns the agent name.
-    """
-    (agent_name, lam, train_prices, eval_prices,
+    """Top-level function (required for multiprocessing pickle)."""
+    (agent_name, train_prices, eval_prices,
      outdir, seed, timesteps, net_arch, bars_per_year, cost_pct,
-     cnn_model_path) = args
+     cnn_model_path, episode_bars) = args
 
     warnings.filterwarnings("ignore")
 
-    train_env = make_env(train_prices, lam, bars_per_year, cost_pct,
-                         cnn_model_path)
-    eval_env  = make_env(eval_prices,  lam, bars_per_year, cost_pct,
-                         cnn_model_path)
+    def make_train():
+        return Monitor(TradingEnv(
+            train_prices, preset=agent_name, bars_per_year=bars_per_year,
+            cost_pct=cost_pct, cnn_model_path=cnn_model_path,
+            train_episode_bars=episode_bars))          # F11 random-start eps
+
+    train_env = DummyVecEnv([make_train])
+    # F10: model selection on validation Sharpe (full path, eval mode)
+    sharpe_eval_env = TradingEnv(
+        eval_prices, preset=agent_name, bars_per_year=bars_per_year,
+        cost_pct=cost_pct, cnn_model_path=cnn_model_path, eval_mode=True)
 
     model_dir = os.path.join(outdir, "models", f"{agent_name}_agent")
     log_dir   = os.path.join(outdir, "logs",   f"{agent_name}_agent")
     os.makedirs(model_dir, exist_ok=True)
     os.makedirs(log_dir,   exist_ok=True)
 
-    eval_cb = EvalCallback(
-        eval_env,
-        best_model_save_path=model_dir,
-        log_path=log_dir,
-        eval_freq=max(timesteps // 20, 1000),  # evaluate 20 times total
-        n_eval_episodes=1,                      # saves 80% eval time
-        deterministic=True,
-        verbose=0,
-    )
+    eval_cb = SharpeEvalCallback(
+        sharpe_eval_env, ann=bars_per_year,
+        eval_freq=max(timesteps // 20, 1000),
+        best_model_save_path=model_dir, verbose=0)
 
     model = SAC(
         "MlpPolicy",
@@ -93,7 +74,21 @@ def _train_worker(args):
     model.learn(total_timesteps=timesteps, callback=eval_cb,
                 progress_bar=True)
     model.save(os.path.join(model_dir, "final_model"))
-    print(f"  [{agent_name}] (λ={lam}) done.")
+
+    # F9: persist exactly how this agent was trained
+    preset = AGENT_PRESETS[agent_name]
+    with open(os.path.join(model_dir, "config.json"), "w") as f:
+        json.dump({
+            "agent": agent_name, "preset": preset, "seed": seed,
+            "timesteps": timesteps, "net_arch": net_arch,
+            "cost_pct": cost_pct, "bars_per_year": bars_per_year,
+            "episode_bars": episode_bars,
+            "reward": "quadratic_utility+dd_zones",
+            "best_val_sharpe": eval_cb.best_sharpe,
+        }, f, indent=2)
+
+    print(f"  [{agent_name}] done — best val Sharpe "
+          f"{eval_cb.best_sharpe:+.3f}")
     return agent_name
 
 
@@ -107,24 +102,29 @@ def main():
     parser.add_argument("--outdir",  default=".")
     parser.add_argument("--seed",    default=config.SEED, type=int)
     parser.add_argument("--quick",   action="store_true",
-                        help="50k steps, [64,64] net — full loop in ~5 min")
+                        help="50k steps, [64,64] net")
     parser.add_argument("--full",    action="store_true",
-                        help="500k steps, [256,256] net — original quality")
-    parser.add_argument("--workers", default=5, type=int,
-                        help="Parallel processes (default=5, one per agent)")
+                        help="500k steps, [256,256] net")
+    parser.add_argument("--steps",   default=0, type=int,
+                        help="Explicit timestep override (walk-forward use)")
+    parser.add_argument("--workers", default=3, type=int)
     parser.add_argument("--agents", default=None, nargs="+",
-                        choices=list(AGENT_PRESETS.keys()),
-                        help="Which agents to train (default: all). "
-                             "e.g. --agents aggressive balanced conservative")
-    parser.add_argument("--cost_pct", default=config.COST_PCT, type=float,
-                        help="One-way transaction cost fraction "
-                             f"(default {config.COST_PCT} from config.py). "
-                             "Must match the value used in evaluate_*.")
-    parser.add_argument("--no_cnn", action="store_true",
-                        help="Disable CNN features even if model exists")
+                        choices=list(AGENT_PRESETS.keys()))
+    parser.add_argument("--cost_pct", default=config.COST_PCT, type=float)
+    parser.add_argument("--episode_bars", default=config.TRAIN_EPISODE_BARS,
+                        type=int,
+                        help="Random-start training episode length in bars "
+                             "(0 = full-path episodes)")
+    parser.add_argument("--no_cnn", action="store_true")
+    parser.add_argument("--data_csv", default=None,
+                        help="Local price cache CSV (see download_data.py)")
     args = parser.parse_args()
 
-    if args.quick:
+    if args.steps > 0:
+        timesteps = args.steps
+        net_arch  = [128, 128]
+        print(f"  Mode: CUSTOM ({timesteps:,} steps, [128,128] net)")
+    elif args.quick:
         timesteps = 50_000
         net_arch  = [64, 64]
         print("  Mode: QUICK (50k steps, [64,64] net)")
@@ -139,7 +139,6 @@ def main():
 
     bars_per_year = BARS_PER_YEAR[args.interval]
 
-    # Auto-detect CNN model
     cnn_model_path = None
     if not args.no_cnn:
         cnn_path = os.path.join(args.outdir, "models", "cnn_features",
@@ -148,37 +147,29 @@ def main():
             cnn_model_path = cnn_path
             print(f"  CNN model found: {cnn_path}")
         else:
-            print(f"  CNN model not found — CNN features disabled. "
-                  f"Run pretrain_cnn.py first to enable.")
+            print("  CNN model not found — CNN features disabled.")
 
-    # Select agents
-    selected_names = args.agents if args.agents else list(AGENT_PRESETS.keys())
-    selected = [(name, AGENT_PRESETS[name]) for name in selected_names]
+    selected = args.agents if args.agents else list(AGENT_PRESETS.keys())
 
-    print(f"\n=== Phase 0: λ-Spectrum Baseline Agents ===")
-    print(f"  Ticker   : {args.ticker}")
-    print(f"  Interval : {args.interval}  ({bars_per_year} bars/year)")
-    print(f"  Period   : {args.start} → {args.end}")
-    print(f"  Cost/side: {args.cost_pct*100:.3f}%")
-    print(f"  Steps    : {timesteps:,} per agent")
-    print(f"  Network  : {net_arch}")
-    print(f"  Workers  : {args.workers} (parallel)")
-    print(f"  CNN feats: {'enabled' if cnn_model_path else 'disabled'}")
-    print(f"  Obs space: 20 features")
+    print(f"\n=== Phase 0: Risk-ladder agents (R4) ===")
+    print(f"  Ticker   : {args.ticker}   {args.start} → {args.end}")
+    print(f"  Cost/side: {args.cost_pct*100:.3f}%   Steps: {timesteps:,}"
+          f"   Episode bars: {args.episode_bars or 'full path'}")
+    for name in selected:
+        p = AGENT_PRESETS[name]
+        print(f"    {name:14s} lam_var={p['lam_var']:<6} "
+              f"max_pos={p['max_pos']:<4} dd_max={p['dd_max']}")
 
-    prices = download_data(args.ticker, args.start, args.end, args.interval)
+    prices = load_prices(args.ticker, args.start, args.end, args.interval,
+                         data_csv=args.data_csv)
     train_prices, eval_prices = train_split(prices)
-    print(f"  Train: {len(train_prices)} bars | Eval: {len(eval_prices)} bars\n")
-
-    print(f"  Agents:")
-    for name, lam in selected:
-        print(f"    {name:22s}  λ = {lam}")
+    print(f"  Train: {len(train_prices)} bars | Val: {len(eval_prices)} bars\n")
 
     worker_args = [
-        (name, lam, train_prices, eval_prices,
+        (name, train_prices, eval_prices,
          args.outdir, args.seed + i, timesteps, net_arch, bars_per_year,
-         args.cost_pct, cnn_model_path)
-        for i, (name, lam) in enumerate(selected)
+         args.cost_pct, cnn_model_path, args.episode_bars)
+        for i, name in enumerate(selected)
     ]
 
     n_workers = min(args.workers, len(selected))
@@ -191,5 +182,7 @@ def main():
             _train_worker(wa)
 
     print("\n✓ All agents trained.")
+
+
 if __name__ == "__main__":
     main()

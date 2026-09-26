@@ -1,75 +1,70 @@
 """
-Phase 2 — Meta-RL environment.
+Phase 2 — Meta-RL environment (rewritten: F2/F3/F8 fixes + R1/R2/R3).
 
-A learned SAC/PPO *meta-agent* replaces the fixed weight-mapping matrix of the
-Phase 1 HMMAllocator.  It observes the market regime + the frozen sub-agents'
-proposals and outputs a continuous 3-vector that is soft-maxed into allocation
-weights over the three λ-spectrum sub-agents.  The blended action is executed in
-a single portfolio TradingEnv (λ=0 execution semantics, meta-λ in the reward).
+A learned SAC meta-agent blends the FROZEN Phase 0 sub-agents.  Changes vs the
+original version:
 
-The sub-agents (aggressive / balanced / conservative) are FROZEN: they act as a
-fixed part of the environment, exactly as in Phase 1's `run_allocator`.
+  * F3 — each frozen sub-agent now observes its OWN shadow book (position /
+    unreal PnL / time-in-trade / drawdown), not the blended portfolio's, so
+    the frozen policies run on-distribution.  See env/shadow.py.
+  * F2 — the "recent performance" features are the trailing sums of each
+    agent's hypothetical net returns (cost-inclusive, correctly time-aligned).
+  * R1 — the action is a softmax over {agents..., CASH}: the meta-agent can
+    de-risk to cash instead of only re-mixing the agents.
+  * R2 — optional volatility-target overlay: the blended position is scaled by
+    clip(vol_target / EWMA realized vol, 0, cap).  The overlay may lever up to
+    `vol_target_cap` (the execution env's max_pos is widened accordingly).
+  * R3 — default reward is the Differential Sharpe Ratio (Moody & Saffell)
+    of the executed net returns, plus the diversity bonus, turnover penalty
+    and the drawdown-zone penalty.  `meta_reward="composite"` keeps a
+    mean–variance composite for ablation.
+  * F8 — pass `start_index` so evaluation windows include warm feature/HMM
+    history but trading starts exactly at the test boundary.
 
-──────────────────────────────────────────────────────────────────────────────
-Meta-observation layout (length = K + 12 + 3·N_AGENTS;  21 for K=3, N=3)
+Meta-observation layout (K = HMM states, N = number of sub-agents, C = 1 if
+cash arm else 0):
 
-  [0:K]            HMM filtered posterior  P(state_t | o_1…o_t)   (no look-ahead)
-  [K:K+3]          vol_10, vol_20, vol_60                         (market vol)
-  [K+3:K+7]        ret_5, ret_10, ret_20, ret_60                  (market momentum)
-  [K+7]            portfolio drawdown
-  [K+8]            current blended position
-  [K+9 : K+9+N]    sub-agent proposed actions
-  [.. : ..+N]      sub-agent recent performance (cum. hypothetical return)
-  [.. : ..+N]      previous allocation weights
+  [0:K]        HMM filtered posterior (causal)
+  [K:K+3]      vol_10, vol_20, vol_60
+  [K+3:K+7]    ret_5, ret_10, ret_20, ret_60
+  [K+7]        portfolio drawdown        (execution env)
+  [K+8]        current executed position (position units; can exceed 1 with lever)
+  [K+9]        current vol-target leverage (1.0 when overlay off)
+  [.. +N]      sub-agent proposed positions (action × its own max_pos)
+  [.. +N]      sub-agent shadow performance (trailing net return sum)
+  [.. +N+C]    previous allocation weights
 
-Meta-action: Box(-1, 1, shape=(N_AGENTS,))  →  softmax(logit_scale · a) → weights
-
-Meta-reward (per step):
-
-    R_meta = net_ret / vol_scale  −  λ_meta · (dd_dev + dd_penalty)     ← base env
-             + α · H(weights)/log(N)            (diversity bonus, anti-collapse)
-             − β · Σ|w_t − w_{t−1}|             (turnover penalty, anti-churn)
-
-The base term is produced by the wrapped TradingEnv (lam=λ_meta, meta dd zones);
-α and β are the meta-level shaping terms motivated in PROJECT_CONTEXT.md.
+Meta-action: Box(-1, 1, shape=(N+C,)) → softmax(logit_scale · a) → weights.
 """
 
 import os
 
 import numpy as np
+import pandas as pd
 import gymnasium as gym
 from gymnasium import spaces
 from stable_baselines3 import SAC
 
 from env.trading_env import TradingEnv
+from env.shadow import ShadowBooks
 from regime.allocators import AGENT_ORDER, N_AGENTS
 from regime.hmm_regime import HMMRegimeDetector
+from config import AGENT_PRESETS
+import config as CFG
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def softmax_weights(action, logit_scale=2.0):
-    """
-    Map an unconstrained meta-action in [-1, 1]^N to a simplex of allocation
-    weights via a temperature-scaled softmax.
-
-    `logit_scale` controls how decisive the allocation can become: with the
-    default 2.0 a saturated action like [1, -1, -1] yields ≈[0.96, 0.02, 0.02],
-    so the meta-agent *can* concentrate on one sub-agent, but the soft form
-    (plus the entropy bonus in the reward) discourages hard collapse.
-    """
+    """Map an unconstrained action in [-1, 1]^M to simplex weights."""
     z = logit_scale * np.asarray(action, dtype=np.float64).ravel()
-    z -= z.max()                       # numerical stability
+    z -= z.max()
     e = np.exp(z)
     return (e / e.sum()).astype(np.float64)
 
 
 def load_subagents(modeldir, agent_order=AGENT_ORDER, verbose=True):
-    """
-    Load the frozen Phase 0 SAC sub-agents from `<modeldir>/models/<name>_agent/
-    best_model.zip`.  Returns dict name → SAC model (missing agents are simply
-    absent; MetaTradingEnv treats a missing agent as a constant flat proposal).
-    """
+    """Load frozen Phase 0 SAC sub-agents from <modeldir>/models/<name>_agent/."""
     agents = {}
     for name in agent_order:
         path = os.path.join(modeldir, "models", f"{name}_agent", "best_model")
@@ -83,33 +78,82 @@ def load_subagents(modeldir, agent_order=AGENT_ORDER, verbose=True):
 
 
 def detect_cnn_path(modeldir):
-    """Return the CNN feature-extractor path if present, else None."""
     candidate = os.path.join(modeldir, "models", "cnn_features", "cnn_model.pt")
     return candidate if os.path.isfile(candidate) else None
+
+
+def ewma_vol_series(prices, span=CFG.VOL_EWMA_SPAN, bars_per_year=252):
+    """
+    Annualized EWMA realized vol usable at bar t WITHOUT look-ahead:
+    vol[t] uses simple returns up to the move into bar t (index t-1) —
+    the same information set as the env features at bar t.
+    """
+    arr = prices.values if hasattr(prices, "values") else np.asarray(prices)
+    arr = np.asarray(arr, dtype=np.float64)
+    r = pd.Series(arr).pct_change()
+    s = r.ewm(span=span, min_periods=5).std() * np.sqrt(bars_per_year)
+    vol = s.values                       # vol[i] uses returns up to index i
+    out = np.full(len(arr), np.nan)
+    out[:] = vol                          # index t ← ewm through return at t
+    return out
+
+
+class DifferentialSharpe:
+    """
+    Moody & Saffell's Differential Sharpe Ratio on percent-scale returns.
+
+      A_t = A_{t-1} + η (r_t − A_{t-1});  B_t = B_{t-1} + η (r_t² − B_{t-1})
+      D_t = (B_{t-1} ΔA_t − ½ A_{t-1} ΔB_t) / (B_{t-1} − A_{t-1}²)^{3/2}
+
+    For the first `warmup` steps (moments not yet formed) the plain scaled
+    return is emitted instead.
+    """
+
+    def __init__(self, eta=CFG.DSR_ETA, warmup=20, ret_scale=100.0):
+        self.eta, self.warmup, self.ret_scale = eta, int(warmup), ret_scale
+        self.reset()
+
+    def reset(self):
+        self.A, self.B, self.n = 0.0, 0.0, 0
+
+    def step(self, net_ret):
+        r = float(net_ret) * self.ret_scale
+        self.n += 1
+        dA = r - self.A
+        dB = r * r - self.B
+        if self.n <= self.warmup:
+            self.A += self.eta * dA
+            self.B += self.eta * dB
+            return r
+        denom = max(self.B - self.A * self.A, 1e-8) ** 1.5
+        dsr = (self.B * dA - 0.5 * self.A * dB) / denom
+        self.A += self.eta * dA
+        self.B += self.eta * dB
+        return float(np.clip(dsr, -10.0, 10.0))
 
 
 # ── Meta environment ─────────────────────────────────────────────────────────
 
 class MetaTradingEnv(gym.Env):
     """
-    Gymnasium environment whose *agent* is the meta-controller.
-
     Parameters
     ----------
-    prices          : pd.Series — full price series for the episode window
-    subagents       : dict name → frozen SAC model (see load_subagents)
-    hmm_detector    : fitted HMMRegimeDetector (or None to disable regime obs)
-    ann             : bars_per_year (252 for daily)
-    cost_pct        : one-way transaction cost (must match sub-agent training)
-    lam_meta        : risk aversion of the meta reward's base term
-    alpha           : weight on the entropy (diversity) bonus
-    beta            : weight on the turnover penalty
-    dd_free, dd_max : meta-level drawdown zones (tighter than the sub-agents')
-    logit_scale     : softmax temperature for action → weights
-    perf_window     : look-back (bars) for the per-agent recent-performance feat
-    eval_mode       : if True, drawdown does NOT terminate the episode
-    cnn_model_path  : CNN feature extractor for the wrapped TradingEnv's obs
-    deterministic_subagents : predict sub-agent actions deterministically
+    prices          : pd.Series — price series (warm history + trading window)
+    subagents       : dict name → frozen SAC model
+    hmm_detector    : fitted HMMRegimeDetector (or None)
+    ann             : bars_per_year
+    cost_pct        : one-way transaction cost
+    use_cash        : R1 — add a cash arm to the softmax
+    vol_target      : R2 — annualized vol target (0 disables the overlay)
+    vol_target_cap  : max leverage the overlay may apply
+    meta_reward     : "dsr" (R3) or "composite"
+    lam_var_meta    : variance aversion of the composite reward
+    alpha, beta     : diversity bonus / turnover penalty weights
+    dd_free, dd_max : meta-level drawdown zones (termination in training)
+    logit_scale     : softmax temperature
+    perf_window     : trailing window for the shadow performance features
+    start_index     : F8 — first bar at which trading starts
+    eval_mode       : True → no drawdown termination, full window
     """
 
     metadata = {"render_modes": []}
@@ -121,84 +165,104 @@ class MetaTradingEnv(gym.Env):
         hmm_detector=None,
         ann:          int   = 252,
         cost_pct:     float = 0.0002,
-        lam_meta:     float = 0.5,
+        use_cash:     bool  = CFG.META_USE_CASH,
+        vol_target:   float = CFG.VOL_TARGET,
+        vol_target_cap: float = CFG.VOL_TARGET_CAP,
+        meta_reward:  str   = CFG.META_REWARD,
+        lam_var_meta: float = 12.0,
+        dsr_eta:      float = CFG.DSR_ETA,
         alpha:        float = 0.05,
         beta:         float = 0.05,
         dd_free:      float = 0.03,
         dd_max:       float = 0.10,
         logit_scale:  float = 2.0,
         perf_window:  int   = 20,
+        start_index:  int   = None,
         eval_mode:    bool  = False,
         cnn_model_path: str = None,
         deterministic_subagents: bool = True,
     ):
         super().__init__()
 
+        assert meta_reward in ("dsr", "composite")
         self.prices       = prices
         self.subagents    = subagents
         self.hmm          = hmm_detector
         self.ann          = ann
         self.cost_pct     = cost_pct
-        self.lam_meta     = float(lam_meta)
+        self.use_cash     = bool(use_cash)
+        self.vol_target   = float(vol_target)
+        self.vol_cap      = float(vol_target_cap)
+        self.meta_reward  = meta_reward
         self.alpha        = float(alpha)
         self.beta         = float(beta)
         self.logit_scale  = float(logit_scale)
         self.perf_window  = int(perf_window)
         self.eval_mode    = eval_mode
-        self.cnn_path     = cnn_model_path
         self.det_sub      = deterministic_subagents
 
-        # Wrapped single-portfolio execution env. λ=λ_meta so its per-step
-        # reward already carries the mean-risk base term; we add the meta
-        # shaping terms (entropy / turnover) on top in step().
+        exec_cap = self.vol_cap if self.vol_target > 0 else 1.0
         self._env = TradingEnv(
-            prices, lam=lam_meta, bars_per_year=ann, cost_pct=cost_pct,
+            prices,
+            lam_var=(lam_var_meta if meta_reward == "composite" else 0.0),
+            max_pos=exec_cap,
+            bars_per_year=ann, cost_pct=cost_pct,
             dd_free=dd_free, dd_max=dd_max, eval_mode=eval_mode,
-            cnn_model_path=cnn_model_path,
+            cnn_model_path=cnn_model_path, start_index=start_index,
         )
-        self.warmup = self._env.warmup
+        self.warmup      = self._env.warmup
+        self.start_index = self._env.start_index
 
-        # Number of HMM states feeding the obs (0 if no detector).
+        # Per-agent hard caps (positions are blended in position units)
+        self._caps = np.array([AGENT_PRESETS[n]["max_pos"]
+                               for n in AGENT_ORDER])
+
+        # Vol-target leverage series (causal)
+        self._ewma_vol = ewma_vol_series(prices, bars_per_year=ann)
+
+        # HMM causal posteriors precomputed once over the full series
         self._K = hmm_detector.n_states if hmm_detector is not None else 0
-
-        # Precompute the causal (forward-filtered) HMM posteriors ONCE for the
-        # whole series, indexed by bar → O(1) lookup per step, no look-ahead.
         self._post = None
         self._valid_start = 0
         if hmm_detector is not None:
             obs, self._valid_start = HMMRegimeDetector.build_observations(prices)
-            self._post = hmm_detector.filtered_proba(obs)   # (T_obs, K)
+            self._post = hmm_detector.filtered_proba(obs)
 
-        # Per-agent recent-performance ring buffers (hypothetical agent returns)
-        self._perf = np.zeros((N_AGENTS, self.perf_window), dtype=np.float64)
-        self._perf_i = 0
-        self._perf_n = 0
+        # Shadow books for the frozen sub-agents (F2/F3)
+        self._books = ShadowBooks(N_AGENTS, cost_pct, self._caps,
+                                  perf_window=self.perf_window,
+                                  start_index=self.start_index)
 
-        # Observation / action spaces
-        self._n_obs = self._K + 3 + 4 + 1 + 1 + 3 * N_AGENTS
+        self._dsr = DifferentialSharpe(eta=dsr_eta)
+
+        # Spaces
+        self._n_act = N_AGENTS + (1 if self.use_cash else 0)
+        self._n_obs = self._K + 3 + 4 + 3 + N_AGENTS + N_AGENTS + self._n_act
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(self._n_obs,), dtype=np.float32)
         self.action_space = spaces.Box(
-            low=-1.0, high=1.0, shape=(N_AGENTS,), dtype=np.float32)
+            low=-1.0, high=1.0, shape=(self._n_act,), dtype=np.float32)
 
-        self._base_obs   = None
-        self._proposals  = None
-        self._prev_w     = None
+        self._proposals_a   = None   # raw sub-agent actions in [-1, 1]
+        self._proposals_pos = None   # proposals in position units (a × cap)
+        self._prev_w        = None
+        self._lever         = 1.0
 
-    # ── Sub-agent proposals ─────────────────────────────────────────────────
+    # ── Sub-agent proposals (from their own shadow obs — F3) ───────────────
 
-    def _propose(self, base_obs):
-        """Each frozen sub-agent proposes a position in [-1, 1] from base_obs."""
-        out = np.zeros(N_AGENTS, dtype=np.float64)
+    def _propose(self):
+        a = np.zeros(N_AGENTS, dtype=np.float64)
         for i, name in enumerate(AGENT_ORDER):
             model = self.subagents.get(name)
             if model is None:
                 continue
-            a, _ = model.predict(base_obs, deterministic=self.det_sub)
-            out[i] = float(np.clip(np.asarray(a).ravel()[0], -1.0, 1.0))
-        return out
+            obs_i = self._books.agent_obs(self._env, i)
+            act, _ = model.predict(obs_i, deterministic=self.det_sub)
+            a[i] = float(np.clip(np.asarray(act).ravel()[0], -1.0, 1.0))
+        self._proposals_a   = a
+        self._proposals_pos = a * self._caps
 
-    # ── HMM posterior lookup (causal) ───────────────────────────────────────
+    # ── HMM posterior lookup (causal) ──────────────────────────────────────
 
     def _hmm_post(self, t):
         if self._post is None:
@@ -210,79 +274,91 @@ class MetaTradingEnv(gym.Env):
             i = len(self._post) - 1
         return self._post[i]
 
-    # ── Observation assembly ─────────────────────────────────────────────────
+    # ── Vol-target leverage ────────────────────────────────────────────────
+
+    def _leverage(self, t):
+        if self.vol_target <= 0:
+            return 1.0
+        v = self._ewma_vol[t]
+        if not np.isfinite(v) or v < 1e-4:
+            return 1.0
+        return float(np.clip(self.vol_target / v, 0.0, self.vol_cap))
+
+    # ── Observation assembly ───────────────────────────────────────────────
 
     def _make_obs(self):
-        b = self._base_obs
-        t = self._env.t
-        perf = self._perf_sum()
-
+        e = self._env
+        t = e.t
+        f = e._feat
         parts = [
-            self._hmm_post(t),                         # K regime posteriors
-            np.array([b[4], b[5], b[6]]),              # vol_10/20/60
-            np.array([b[0], b[1], b[2], b[3]]),        # ret_5/10/20/60
-            np.array([b[16]]),                         # drawdown
-            np.array([b[13]]),                         # current position
-            self._proposals,                           # sub-agent actions (N)
-            perf,                                      # recent performance (N)
-            self._prev_w,                              # previous weights (N)
+            self._hmm_post(t),
+            np.array([f["vol_10"][t], f["vol_20"][t], f["vol_60"][t]]),
+            np.array([f["ret_5"][t], f["ret_10"][t],
+                      f["ret_20"][t], f["ret_60"][t]]),
+            np.array([e._current_drawdown()]),
+            np.array([e.position]),
+            np.array([self._lever]),
+            self._proposals_pos,
+            self._books.perf(),
+            self._prev_w,
         ]
         return np.concatenate(parts).astype(np.float32)
 
-    def _perf_sum(self):
-        """Per-agent cumulative hypothetical return over the perf window."""
-        if self._perf_n == 0:
-            return np.zeros(N_AGENTS, dtype=np.float64)
-        valid = self._perf if self._perf_n == self.perf_window \
-            else self._perf[:, :self._perf_n]
-        return valid.sum(axis=1)
-
-    # ── Gym API ──────────────────────────────────────────────────────────────
+    # ── Gym API ────────────────────────────────────────────────────────────
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        self._base_obs, _ = self._env.reset()
-        self._proposals   = self._propose(self._base_obs)
-        self._prev_w      = np.full(N_AGENTS, 1.0 / N_AGENTS)
-        self._perf[:]     = 0.0
-        self._perf_i      = 0
-        self._perf_n      = 0
+        self._env.reset()
+        self._books.reset(self._env.t)
+        self._dsr.reset()
+        self._prev_w = np.full(self._n_act, 1.0 / self._n_act)
+        self._lever  = self._leverage(self._env.t)
+        self._propose()
         return self._make_obs(), {}
 
     def step(self, action):
         weights = softmax_weights(action, self.logit_scale)
 
-        # Blend the frozen sub-agents' proposals → single executed position.
-        blended = float(np.clip(np.dot(weights, self._proposals), -1.0, 1.0))
+        # R1: blend agent POSITIONS; the cash arm (last weight) contributes 0.
+        raw = float(np.dot(weights[:N_AGENTS], self._proposals_pos))
 
-        # Price return applied to the position on this step (see TradingEnv).
+        # R2: vol-target overlay
         t0 = self._env.t
-        price_ret = float(self._env.returns[t0 - 1])
+        self._lever = self._leverage(t0)
+        executed = float(np.clip(raw * self._lever,
+                                 -self._env.max_pos, self._env.max_pos))
 
-        self._base_obs, base_reward, done, truncated, info = self._env.step(
-            np.array([blended], dtype=np.float32))
+        # Execution env acts in [-1,1] × its own max_pos
+        env_action = np.array([executed / self._env.max_pos], dtype=np.float32)
+        _, base_reward, done, truncated, info = self._env.step(env_action)
 
-        # Record each sub-agent's hypothetical (gross) return for the perf feat.
-        self._perf[:, self._perf_i] = self._proposals * price_ret
-        self._perf_i = (self._perf_i + 1) % self.perf_window
-        self._perf_n = min(self._perf_n + 1, self.perf_window)
+        # Shadow books earn the SAME realized return (F2 time-aligned)
+        self._books.step(self._proposals_a, info["price_ret"])
+        self._books.mark_flat(self._env.t)
 
-        # Meta-level reward shaping.
+        # Reward
         diversity = self._entropy(weights)
         turnover  = float(np.abs(weights - self._prev_w).sum())
-        meta_reward = float(base_reward
-                            + self.alpha * diversity
-                            - self.beta * turnover)
+        if self.meta_reward == "dsr":
+            core = self._dsr.step(info["net_ret"]) - info["dd_penalty"]
+        else:
+            core = base_reward
+        meta_reward = float(core + self.alpha * diversity - self.beta * turnover)
 
-        # Advance state for the next decision.
-        self._proposals = self._propose(self._base_obs)
-        self._prev_w    = weights
+        # Advance decision state
+        self._propose()
+        self._prev_w = weights
 
         info = dict(info)
         info.update({
-            "weights":       weights,
-            "blended":       blended,
-            "proposals":     self._proposals.copy(),
+            "weights":       weights,               # incl. cash arm if enabled
+            "agent_weights": weights[:N_AGENTS],
+            "w_cash":        float(weights[-1]) if self.use_cash else 0.0,
+            "raw_blend":     raw,
+            "lever":         self._lever,
+            "blended":       executed,
+            "proposals":     self._proposals_pos.copy(),
+            "shadow_perf":   self._books.perf(),
             "diversity":     diversity,
             "turnover":      turnover,
             "base_reward":   float(base_reward),
@@ -294,7 +370,6 @@ class MetaTradingEnv(gym.Env):
 
     @staticmethod
     def _entropy(w):
-        """Shannon entropy of the weight vector, normalised to [0, 1]."""
         p = np.clip(w, 1e-12, 1.0)
         h = -np.sum(p * np.log(p))
         return float(h / np.log(len(w)))

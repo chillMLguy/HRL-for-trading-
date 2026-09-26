@@ -1,5 +1,10 @@
 # Hierarchical RL Trading System
 
+> **improvements branch:** the envs, rewards, and evaluation protocol were
+> substantially reworked (correctness fixes F1–F12 + research features
+> R1/R2/R3/R4/R7). **See [CHANGES.md](CHANGES.md)** — old results and parts of
+> this README are superseded.
+
 Master's thesis project: a multi-agent reinforcement learning system for trading
 the Dow Jones Index (`^DJI`), where diverse risk-profile agents are coordinated
 by a regime-aware meta-controller. See [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md)

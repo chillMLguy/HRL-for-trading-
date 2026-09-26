@@ -65,10 +65,13 @@ def compute_vol_20(returns, w20):
 def main():
     parser = argparse.ArgumentParser(
         description="Pre-train CNN for price pattern features")
-    parser.add_argument("--ticker",     default="SPY")
-    parser.add_argument("--start",      default="2024-04-01")
-    parser.add_argument("--end",        default="2025-10-31")
-    parser.add_argument("--interval",   default="1h",
+    # F12: defaults must NEVER overlap a test window — the old defaults
+    # (SPY 1h 2024-04 → 2025-10) would leak test-period information into the
+    # CNN features of any run that tests on 2024/2025.
+    parser.add_argument("--ticker",     default="^DJI")
+    parser.add_argument("--start",      default="2013-01-01")
+    parser.add_argument("--end",        default="2023-12-31")
+    parser.add_argument("--interval",   default="1d",
                         choices=list(BARS_PER_YEAR.keys()))
     parser.add_argument("--outdir",     default=".")
     parser.add_argument("--epochs",     default=100, type=int)
