@@ -1,0 +1,11 @@
+model,window,proposals,sharpe,bars,bh_sharpe
+aggressive,train,,4.725,2153,0.683
+aggressive,val,,0.84,493,0.2
+balanced,train,,2.733,2153,0.683
+balanced,val,,1.399,493,0.2
+conservative,train,,9.137,2153,0.683
+conservative,val,,0.387,493,0.2
+meta_rl,train,in_sample,9.321,2291,0.626
+equal_weight,train,in_sample,5.235,2291,0.626
+meta_rl,val,in_sample,1.477,355,0.813
+equal_weight,val,in_sample,1.775,355,0.813
