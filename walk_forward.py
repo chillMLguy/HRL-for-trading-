@@ -13,6 +13,7 @@ fold/seed cell is exactly one reproducible pipeline run.  Already-completed
 cells (phase2_returns.csv present) are skipped, so the sweep is resumable.
 
 Afterwards:   python aggregate_results.py --root <outroot>
+              python dashboard.py
 
 Example (full sweep):
     python download_data.py

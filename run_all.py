@@ -3,7 +3,7 @@ F9 — one command regenerates a full single-split run (phase 0 → 1 → 2 → 
 from one set of arguments, so every CSV/model in an outdir comes from the SAME
 configuration.
 
-    python run_all.py --outdir split2024 \
+    python run_all.py --outdir runs/split2024 \
         --train_start 2013-01-01 --train_end 2023-12-31 \
         --test_start 2024-01-01 --test_end 2024-12-31 --full
 """
@@ -24,7 +24,7 @@ def sh(cmd):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--outdir",      default="run")
+    p.add_argument("--outdir",      default="runs/latest")
     p.add_argument("--ticker",      default=config.TICKER)
     p.add_argument("--train_start", default=config.TRAIN_START)
     p.add_argument("--train_end",   default=config.TRAIN_END)
@@ -80,6 +80,7 @@ def main():
         "--outdir", args.outdir] + base)
 
     print(f"\n✓ Full pipeline complete → {args.outdir}")
+    print("  See the results with:  python dashboard.py")
 
 
 if __name__ == "__main__":

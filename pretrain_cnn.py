@@ -9,24 +9,15 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import numpy as np
-import yfinance as yf
 import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 
+from common.data import load_prices
 from env.cnn_model import PricePatternCNN
 
 
 BARS_PER_YEAR = {"1d": 252, "1h": 1638, "30m": 3276, "15m": 6552}
-
-
-def download_data(ticker, start, end, interval="1h"):
-    print(f"  Downloading {ticker} {start} → {end} (interval={interval})...")
-    df = yf.download(ticker, start=start, end=end, interval=interval,
-                     auto_adjust=True, progress=False)
-    prices = df["Close"].squeeze().dropna()
-    print(f"  {len(prices)} bars loaded.")
-    return prices
 
 
 def build_dataset(returns, vol_20, w_cnn, w_fwd, ann_factor):
@@ -80,6 +71,8 @@ def main():
     parser.add_argument("--batch_size", default=64, type=int)
     parser.add_argument("--lr",         default=1e-3, type=float)
     parser.add_argument("--seed",       default=42, type=int)
+    parser.add_argument("--data_csv",   default=None,
+                        help="Local price cache CSV (see download_data.py)")
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -100,7 +93,8 @@ def main():
     print(f"  Latent dim  : {args.latent_dim}")
 
 
-    prices = download_data(args.ticker, args.start, args.end, args.interval)
+    prices = load_prices(args.ticker, args.start, args.end, args.interval,
+                         data_csv=args.data_csv)
     returns = np.diff(np.log(prices.values)).astype(np.float32)
 
 

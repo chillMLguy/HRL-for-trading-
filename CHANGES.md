@@ -1,4 +1,8 @@
-# Improvements branch — what changed and why
+# The August 2026 rework: what changed and why
+
+> Historical record of the rework behind the current code. **For how to run the
+> code, see [README.md](README.md).** The older results and plots mentioned here
+> were removed from the working tree and remain in git history at commit `ebd3b23`.
 
 Every change is tagged with the ID from the analysis doc
 (*claude/repo-analysis-and-research-ideas.md* in the claude.ai project).

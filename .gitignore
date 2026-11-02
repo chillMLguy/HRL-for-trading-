@@ -176,3 +176,25 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+# macOS
+.DS_Store
+
+# Trained models and training logs: regenerate with run_all.py / walk_forward.py.
+# Result CSVs and config JSON files under runs/ stay tracked.
+*.zip
+*.pkl
+*.pt
+*.npz
+logs/
+events.out.tfevents.*
+
+# Generated output
+dashboard.html
+runs/**/*.png
+runs/latest/
+
+# Scripts run without --outdir write into the repo root
+/models/
+/phase[0-9]_*.csv
+/equity_curves.csv
+/regime_table.csv
