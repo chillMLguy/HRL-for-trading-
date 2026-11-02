@@ -1,0 +1,21 @@
+{
+	"folders": [
+		{
+			"name": "HRL-for-trading-",
+			"path": ".."
+		},
+		{
+			"name": "env",
+			"path": "../../../../Downloads/hrl-improvements/env"
+		},
+		{
+			"name": "common",
+			"path": "../../../../Downloads/hrl-improvements/common"
+		},
+		{
+			"name": "tests",
+			"path": "../../../../Downloads/hrl-improvements/tests"
+		}
+	],
+	"settings": {}
+}
