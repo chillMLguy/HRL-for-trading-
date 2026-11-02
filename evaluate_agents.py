@@ -10,50 +10,8 @@ from stable_baselines3 import SAC
 
 from env.trading_env import TradingEnv, AGENT_PRESETS
 from common.data import load_prices, warm_start_date, trading_start_index
+from common.stats import sharpe, max_drawdown, cvar_metric, compute_metrics
 import config
-
-# ── Metrics ───────────────────────────────────────────────────────
-
-def sharpe(r, ann=252):
-    s = r.std()
-    return float(np.sqrt(ann) * r.mean() / s) if s > 1e-10 else 0.0
-
-def sortino(r, ann=252):
-    down = r[r < 0]
-    ds = down.std() if len(down) > 1 else 1e-10
-    return float(np.sqrt(ann) * r.mean() / ds)
-
-def max_drawdown(eq):
-    peak = np.maximum.accumulate(eq)
-    dd   = (peak - eq) / np.where(peak > 0, peak, 1e-10)
-    return float(dd.max())
-
-def calmar(r, eq, ann=252):
-    mdd = max_drawdown(eq)
-    return float(r.mean() * ann / mdd) if mdd > 1e-6 else 0.0
-
-def cvar_metric(r, alpha=0.95):
-    var = np.percentile(r, (1 - alpha) * 100)
-    tail = r[r <= var]
-    return float(tail.mean()) if len(tail) > 0 else 0.0
-
-def omega_metric(r, threshold=0.0):
-    gains  = (r[r > threshold] - threshold).sum()
-    losses = (threshold - r[r < threshold]).sum()
-    return float(gains / losses) if losses > 1e-10 else 2.0
-
-def compute_metrics(r, eq, ann=252):
-    return {
-        "Total ret (%)":  round((eq[-1] / eq[0] - 1) * 100, 2),
-        "Ann. ret (%)":   round(r.mean() * ann * 100, 2),
-        "Sharpe":         round(sharpe(r, ann), 3),
-        "Sortino":        round(sortino(r, ann), 3),
-        "MaxDD (%)":      round(max_drawdown(eq) * 100, 2),
-        "Calmar":         round(calmar(r, eq, ann), 3),
-        "CVaR 95% (%)":   round(cvar_metric(r) * 100, 3),
-        "Omega":          round(omega_metric(r), 3),
-        "Win rate (%)":   round((r > 0).mean() * 100, 1),
-    }
 
 
 # ── Regime labeling (diagnostics) ──────────────────────────────────

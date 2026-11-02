@@ -12,7 +12,9 @@ Reads every <root>/fold*/seed*/phase2_returns.csv, then reports per strategy:
 
 Outputs under <root>:
   walkforward_summary.csv    per_fold_sharpe.csv    pooled_returns.csv
-  walkforward_report.txt     pooled_equity.png
+  walkforward_report.txt
+
+The charts for these numbers are in the dashboard:  python dashboard.py
 """
 import argparse
 import glob
@@ -22,9 +24,8 @@ import re
 import numpy as np
 import pandas as pd
 
-from common.stats import (ann_sharpe, bootstrap_sharpe_ci,
-                          bootstrap_sharpe_diff_pvalue,
-                          probabilistic_sharpe, deflated_sharpe, summary_row)
+from common.stats import (ann_sharpe, bootstrap_sharpe_diff_pvalue,
+                          deflated_sharpe, summary_row)
 
 
 def load_cells(root):
@@ -40,22 +41,16 @@ def load_cells(root):
     return cells
 
 
-def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--root", default="runs/wf")
-    p.add_argument("--ann",  type=int, default=252)
-    args = p.parse_args()
-
-    cells = load_cells(args.root)
-    if not cells:
-        print(f"No phase2_returns.csv found under {args.root}. "
-              f"Run walk_forward.py first.")
-        return
+def aggregate(cells, ann=252):
+    """
+    Pool a {(fold, seed): returns DataFrame} grid.  Returns a dict with:
+    folds, seeds, strategies, pooled_mean (date × strategy, seed-averaged),
+    summary, per_fold (strategy × fold Sharpe, seed mean), per_seed_sharpe
+    ({strategy: {seed: Sharpe}}) and tests (paired bootstrap vs benchmarks).
+    """
     folds = sorted({f for f, _ in cells})
     seeds = sorted({s for _, s in cells})
     strategies = [c for c in next(iter(cells.values())).columns if c != "date"]
-    print(f"Loaded {len(cells)} cells: folds {folds} × seeds {seeds}")
-    print(f"Strategies: {strategies}\n")
 
     # ── per-seed pooled series (folds chained chronologically) ────────────
     pooled_by_seed = {}       # seed → DataFrame(date × strategy)
@@ -69,7 +64,6 @@ def main():
     # seed-mean daily returns (benchmarks are identical across seeds)
     pooled_mean = (pd.concat(pooled_by_seed.values())
                    .groupby(level=0).mean().sort_index())
-    pooled_mean.to_csv(os.path.join(args.root, "pooled_returns.csv"))
 
     # trials for the Deflated Sharpe: every strategy×seed pooled Sharpe
     trial_sharpes = []
@@ -79,15 +73,15 @@ def main():
         for s, df in pooled_by_seed.items():
             r = df[name].values
             sr = r.mean() / max(r.std(), 1e-12)     # per-period units
-            per_seed_sharpe[name][s] = ann_sharpe(r, args.ann)
+            per_seed_sharpe[name][s] = ann_sharpe(r, ann)
             trial_sharpes.append(sr)
 
     # ── headline summary ──────────────────────────────────────────────────
     rows = []
     for name in strategies:
         r = pooled_mean[name].values
-        row = summary_row(r, ann=args.ann, name=name)
-        row["dsr"] = round(deflated_sharpe(r, trial_sharpes, args.ann), 3)
+        row = summary_row(r, ann=ann, name=name)
+        row["dsr"] = round(deflated_sharpe(r, trial_sharpes, ann), 3)
         srs = list(per_seed_sharpe[name].values())
         row["seed_sharpe_mean"] = round(float(np.mean(srs)), 3)
         row["seed_sharpe_std"]  = round(float(np.std(srs)), 3)
@@ -99,7 +93,7 @@ def main():
     per_fold = {}
     for f in folds:
         for name in strategies:
-            vals = [ann_sharpe(cells[(f, s)][name].values, args.ann)
+            vals = [ann_sharpe(cells[(f, s)][name].values, ann)
                     for s in seeds if (f, s) in cells]
             per_fold.setdefault(name, {})[f] = round(float(np.mean(vals)), 3)
     per_fold_df = pd.DataFrame(per_fold).T
@@ -111,49 +105,53 @@ def main():
             if bench in strategies:
                 d, pv = bootstrap_sharpe_diff_pvalue(
                     pooled_mean["meta_rl"].values,
-                    pooled_mean[bench].values, args.ann)
+                    pooled_mean[bench].values, ann)
                 tests.append({"comparison": f"meta_rl − {bench}",
                               "sharpe_diff": round(d, 3),
                               "p_value_H0_diff<=0": round(pv, 4)})
-    tests_df = pd.DataFrame(tests)
+
+    return {"folds": folds, "seeds": seeds, "strategies": strategies,
+            "pooled_mean": pooled_mean, "summary": summary,
+            "per_fold": per_fold_df, "per_seed_sharpe": per_seed_sharpe,
+            "tests": pd.DataFrame(tests)}
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--root", default="runs/wf")
+    p.add_argument("--ann",  type=int, default=252)
+    args = p.parse_args()
+
+    cells = load_cells(args.root)
+    if not cells:
+        print(f"No phase2_returns.csv found under {args.root}. "
+              f"Run walk_forward.py first.")
+        return
+
+    res = aggregate(cells, args.ann)
+    folds, seeds = res["folds"], res["seeds"]
+    print(f"Loaded {len(cells)} cells: folds {folds} × seeds {seeds}")
+    print(f"Strategies: {res['strategies']}\n")
 
     # ── report ────────────────────────────────────────────────────────────
     sep = "═" * 96
     lines = [sep, "  WALK-FORWARD RESULTS "
              f"({len(folds)} folds × {len(seeds)} seeds, pooled OOS)", sep,
-             summary.to_string(), "",
-             "  Per-fold Sharpe (seed mean):", per_fold_df.to_string(), ""]
-    if len(tests_df):
+             res["summary"].to_string(), "",
+             "  Per-fold Sharpe (seed mean):", res["per_fold"].to_string(), ""]
+    if len(res["tests"]):
         lines += ["  Paired stationary-bootstrap tests:",
-                  tests_df.to_string(index=False), ""]
+                  res["tests"].to_string(index=False), ""]
     lines += [sep]
     report = "\n".join(lines)
     print(report)
 
-    summary.to_csv(os.path.join(args.root, "walkforward_summary.csv"))
-    per_fold_df.to_csv(os.path.join(args.root, "per_fold_sharpe.csv"))
+    res["pooled_mean"].to_csv(os.path.join(args.root, "pooled_returns.csv"))
+    res["summary"].to_csv(os.path.join(args.root, "walkforward_summary.csv"))
+    res["per_fold"].to_csv(os.path.join(args.root, "per_fold_sharpe.csv"))
     with open(os.path.join(args.root, "walkforward_report.txt"), "w") as f:
         f.write(report + "\n")
-
-    # ── pooled equity plot ────────────────────────────────────────────────
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots(figsize=(11, 5.5))
-        for name in strategies:
-            eq = np.cumprod(1.0 + pooled_mean[name].values)
-            lw = 2.2 if name == "meta_rl" else 1.2
-            ax.plot(pooled_mean.index, eq, label=name, linewidth=lw)
-        ax.set_title("Pooled walk-forward OOS equity (seed-averaged)")
-        ax.set_ylabel("equity")
-        ax.legend(fontsize=8)
-        ax.grid(alpha=0.3)
-        fig.tight_layout()
-        fig.savefig(os.path.join(args.root, "pooled_equity.png"), dpi=140)
-        print(f"  Saved plot → {os.path.join(args.root, 'pooled_equity.png')}")
-    except Exception as e:
-        print(f"  [plot skipped: {e}]")
+    print(f"  Charts for these numbers:  python dashboard.py")
 
 
 if __name__ == "__main__":
