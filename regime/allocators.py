@@ -192,9 +192,8 @@ class HMMAllocator(BaseAllocator):
     ])
 
     # 3 states × 3 agents (aggressive, balanced, conservative) — matches
-    # the current AGENT_PRESETS in env/trading_env.py and the weight map
-    # documented in PROJECT_CONTEXT.md.  Previously this case fell through
-    # to np.eye(3), which assigned 100% weight to a single agent per state.
+    # AGENT_PRESETS in config.py.  Previously this case fell through to
+    # np.eye(3), which assigned 100% weight to a single agent per state.
     DEFAULT_WEIGHT_MAP_3x3 = np.array([
         [0.45, 0.30, 0.25],   # state 0: low-vol  — favor aggressive
         [0.10, 0.40, 0.50],   # state 1: mid-vol  — balanced/conservative
