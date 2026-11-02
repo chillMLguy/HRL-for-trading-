@@ -62,6 +62,12 @@ def main():
     p.add_argument("--vol_target", type=float, default=config.VOL_TARGET)
     p.add_argument("--meta_reward", default=config.META_REWARD,
                    choices=["dsr", "composite"])
+    # Cross-fitted meta training
+    p.add_argument("--crossfit", action="store_true",
+                   help="Train the meta-agent on out-of-sample agent behaviour")
+    p.add_argument("--cf_folds", type=int, default=config.CF_FOLDS)
+    p.add_argument("--no_compare_leaked", action="store_true",
+                   help="With --crossfit, skip the in-sample comparison meta-agent")
     args = p.parse_args()
 
     py = sys.executable
@@ -95,6 +101,13 @@ def main():
             "--train_end", tr_end, "--outdir", d, "--seed", str(seed)]
            + base)
 
+        if args.crossfit:
+            sh([py, "train_crossfit.py", "--train_start", tr_start,
+                "--train_end", tr_end, "--outdir", d, "--seed", str(seed),
+                "--steps", str(args.steps0), "--workers", str(args.workers),
+                "--cost_pct", str(args.cost_pct), "--folds", str(args.cf_folds)]
+               + base)
+
         p2 = [py, "train_phase2.py", "--train_start", tr_start,
               "--train_end", tr_end, "--modeldir", d, "--outdir", d,
               "--seed", str(seed), "--steps", str(args.steps2),
@@ -105,11 +118,18 @@ def main():
             p2.append("--no_cash")
         if args.no_hmm:
             p2.append("--no_hmm")
-        sh(p2)
+        if args.crossfit:
+            sh(p2 + ["--crossfit"])
+            if not args.no_compare_leaked:
+                sh(p2 + ["--stream_dates", "--meta_dir", "phase2_leaked"])
+        else:
+            sh(p2)
 
         sh([py, "evaluate_phase2.py", "--test_start", te_start,
             "--test_end", te_end, "--modeldir", d, "--outdir", d,
             "--no_cnn"] + base)
+
+        sh([py, "overfit_check.py", "--rundir", d, "--data_csv", args.data_csv])
 
     print(f"\n✓ Walk-forward complete in {(time.time()-t_start)/60:.1f} min.")
     print(f"  Aggregate with:  python aggregate_results.py --root "

@@ -46,6 +46,17 @@ VOL_TARGET      = 0.10     # R2: annualized vol target for the position overlay 
 VOL_TARGET_CAP  = 1.5      # max leverage the overlay may apply
 VOL_EWMA_SPAN   = 33       # EWMA span for realized-vol estimate (~RiskMetrics 0.94)
 
+# Agents fit on this share of their window and select on the rest (train_agents.py)
+AGENT_TRAIN_RATIO = 0.8
+
+# ── Cross-fitted meta training ───────────
+# Agents and HMM are refit CF_FOLDS times, each time on the bars before one block
+# at the end of the training window, so the meta-agent only ever sees behaviour on
+# unseen data.  See common/crossfit.py.
+CF_FOLDS          = 4
+CF_MIN_TRAIN_FRAC = 0.5    # share of the window that fold 1 fits on
+META_TRAIN_EPISODE_BARS = 252   # random-start meta episodes, ~1 trading year
+
 # ── HMM ─────────────────────────
 N_STATES     = 3
 HMM_EMBARGO  = 5      # drop last N training obs to reduce
