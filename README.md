@@ -44,7 +44,8 @@ cd HRL-for-trading-
 
 ### 2. Create an environment and install
 
-You need Python 3.10 or newer. This setup was tested on Python 3.13.
+You need Python 3.10 or newer. This setup was tested on Python 3.13. PyTorch makes the
+install large: about 5.6 GB on Linux.
 
 ```bash
 python3 -m venv .venv
@@ -77,9 +78,14 @@ with a small budget, then evaluates them on 2024. Results go to `runs/latest/`, 
 ignores.
 
 ```bash
+export OMP_NUM_THREADS=1
 python run_all.py --quick
 python dashboard.py
 ```
+
+This took about 15 minutes on a 2-core machine. Keep `OMP_NUM_THREADS=1` for all training: on
+that machine a small walk-forward cell ran more than 5 times faster than with the default
+threading.
 
 Prices come from `data/prices.csv`, which is in the repo, so no download is needed.
 
@@ -238,8 +244,8 @@ Training budget:
 - **Refreshing prices:** `python download_data.py` overwrites `data/prices.csv`. Do this
   between experiments, not during one, because Yahoo adjusts history over time.
 - **Benchmarks:** judge the model against vol-targeted Buy & Hold (`vol_target_bh`) as well as
-  plain Buy & Hold. Volatility targeting alone tends to improve an index's Sharpe.
-- **One test year proves little:** the 95% interval on a one-year Sharpe spans about ±2. Rely
+  plain Buy & Hold, because the meta-agent has a vol-target overlay of its own.
+- **One test year proves little:** the 95% interval on a one-year Sharpe spans about ±1.5. Rely
   on the walk-forward results and the paired tests when drawing conclusions.
 - **CNN features are off by default.** Their observation slots hold zeros unless a run
   folder contains `models/cnn_features/cnn_model.pt`. To use them, train on that run's training
@@ -250,6 +256,4 @@ Training budget:
   python run_all.py --outdir runs/mycnn --full
   ```
 
-- **Running several trainings in parallel:** set `OMP_NUM_THREADS=1` for each so they don't
-  compete for CPU threads.
 - **Inspecting training:** `tensorboard --logdir runs/split2024/logs`.

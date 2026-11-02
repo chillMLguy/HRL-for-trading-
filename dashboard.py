@@ -671,7 +671,7 @@ def fig_exposure_ladder(run):
     return fig
 
 
-def fig_positions_on_price(run, frame, names, panel_height=112, hidden_area=False):
+def fig_positions_on_price(run, frame, names, panel_height=112):
     """Index level on top; each strategy's position below on a shared date axis."""
     x = _days(frame.index)
     rows = len(names) + 1

@@ -151,7 +151,7 @@ def main():
     res["per_fold"].to_csv(os.path.join(args.root, "per_fold_sharpe.csv"))
     with open(os.path.join(args.root, "walkforward_report.txt"), "w") as f:
         f.write(report + "\n")
-    print(f"  Charts for these numbers:  python dashboard.py")
+    print("  Charts for these numbers:  python dashboard.py")
 
 
 if __name__ == "__main__":
