@@ -149,6 +149,13 @@ agents' in-sample behaviour. It is evaluated on the same test path as `meta_rl_l
 the dashboard's paired test measures the effect of the leak directly. Skip it with
 `--no_compare_leaked`.
 
+One seed can decide that comparison, so retrain only the meta-agents across seeds, with the
+agents held fixed. Use the same budget flag as the run:
+
+```bash
+python meta_seed_study.py --rundir runs/crossfit_2024 --quick --seeds 0 1 2 3
+```
+
 ### 9. Run the ablation studies
 
 Use the same grid with one feature removed, each in its own folder:
@@ -210,6 +217,7 @@ evaluate_agents.py     Phase 0 evaluation; also holds the benchmark functions
 evaluate_phase1.py     Phase 1 evaluation; also holds run_allocator
 evaluate_phase2.py     Full head-to-head; writes the CSVs the dashboard reads
 overfit_check.py       Each model on its training and validation data
+meta_seed_study.py     Cross-fitted vs. leaked meta-agents across seeds, agents held fixed
 
 download_data.py       Refresh data/prices.csv
 pretrain_cnn.py        Optional CNN features (off unless you run this)
@@ -235,6 +243,7 @@ Each run folder holds these files:
 | `phase2_eval_config.json` | Exactly how the evaluation was run |
 | `window_sharpe.csv` | Sharpe of each model on its training and validation data |
 | `crossfit/proposals.csv` | With `--crossfit`: the out-of-sample proposals the meta-agent trained on |
+| `meta_seed_study.csv` | From `meta_seed_study.py`: validation and test Sharpe per seed |
 | `models/*/config.json` | Exactly how each model was trained |
 
 ## Trained models are not in git

@@ -124,6 +124,7 @@ meta-agent's training days were days the agents had been fitted to.
 | R12 | **Cross-fitted meta training.** `--crossfit` refits agents and HMM on the bars before each block at the end of the training window, records what they propose on that block, and trains the meta-agent only on that stream. The last block is validation. | `train_crossfit.py`, `common/crossfit.py`, `env/meta_env.py`, `train_phase2.py` |
 | R13 | **Paired leak ablation.** Each cross-fitted run also trains `meta_rl_leaked` on the same dates, budget and seed with the final agents' in-sample behaviour, and evaluates it on the same test path. | `train_phase2.py --stream_dates`, `evaluate_phase2.py` |
 | R14 | **Random-start meta episodes.** F11 had only reached the agents, so the meta-agent replayed one fixed path. On by default for both meta-agents above; `--episode_bars` sets it anywhere. | `env/meta_env.py`, `train_phase2.py` |
+| R15 | **Seed study for the ablation.** Retrains only the two meta-agents across seeds with agents, HMM and stream fixed. | `meta_seed_study.py` |
 | F13 | **Overfitting check for every run.** `window_sharpe.csv` records each model's Sharpe on its training and validation data, and the dashboard shows it next to test. | `overfit_check.py`, `dashboard.py` |
 
 Runs without `--crossfit` behave exactly as before, so older results stay comparable.
