@@ -101,7 +101,8 @@ def aggregate(cells, ann=252):
     # ── paired tests: meta_rl vs the two benchmarks that matter ───────────
     tests = []
     if "meta_rl" in strategies:
-        for bench in ["equal_weight", "vol_target_bh", "buy_and_hold"]:
+        for bench in ["meta_rl_leaked", "equal_weight", "vol_target_bh",
+                      "buy_and_hold"]:
             if bench in strategies:
                 d, pv = bootstrap_sharpe_diff_pvalue(
                     pooled_mean["meta_rl"].values,

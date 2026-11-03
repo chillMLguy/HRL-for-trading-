@@ -17,9 +17,11 @@ Sections, per run:
   3. Model testing  Meta-RL (Phase 2) vs. rule-based allocators (Phase 1) vs.
                     benchmarks: equity, drawdown, metrics, rolling Sharpe,
                     return distribution, correlation, weights, regimes, ...
-  4. Walk-forward   pooled statistics, per-fold Sharpe, seed dispersion
+  4. Overfitting    each model on its training, validation and test data, from
+                    window_sharpe.csv (written by overfit_check.py)
+  5. Walk-forward   pooled statistics, per-fold Sharpe, seed dispersion
                     (walk-forward experiments only)
-  5. Run details    training configuration, validation vs. test Sharpe
+  6. Run details    training configuration and formula notes
 
 Only the CSV and JSON files written by evaluate_phase2.py are read, so no
 model files are needed and nothing is retrained.  A folder counts as a run
@@ -53,12 +55,13 @@ from common.stats import (bootstrap_sharpe_ci, bootstrap_sharpe_diff_pvalue,
 
 ANN = config.BARS_PER_YEAR.get(config.INTERVAL, 252)
 AGENTS = list(config.AGENT_PRESETS)
-ALLOCATORS = ["meta_rl", "hmm", "vol_regime", "equal_weight"]
+RULE_ALLOCATORS = ["hmm", "vol_regime", "equal_weight"]
+ALLOCATORS = ["meta_rl", "meta_rl_leaked"] + RULE_ALLOCATORS
 BENCHMARKS = ["vol_target_bh", "buy_and_hold"]
 REGIMES = ["low_vol", "mid_vol", "high_vol"]
 
 LABEL = {
-    "meta_rl": "Meta-RL", "hmm": "HMM", "vol_regime": "Vol regime",
+    "meta_rl": "Meta-RL", "meta_rl_leaked": "Meta-RL (leaked)", "hmm": "HMM", "vol_regime": "Vol regime",
     "equal_weight": "Equal weight", "buy_and_hold": "Buy & hold",
     "vol_target_bh": "Vol-target B&H", "aggressive": "Aggressive",
     "balanced": "Balanced", "conservative": "Conservative", "cash": "Cash",
@@ -78,8 +81,9 @@ def label(name):
 SURFACE, INK, INK2 = "#fcfcfb", "#0b0b0b", "#52514e"
 MUTED, GRID, BASELINE, DIV_MID = "#898781", "#e1e0d9", "#c3c2b7", "#f0efec"
 BLUE, RED = "#2a78d6", "#e34948"
+TRAIN_BAR, VAL_BAR = "#6f6d67", "#b6b5ad"
 COLOR = {
-    "meta_rl": BLUE, "hmm": "#eb6834", "vol_regime": "#1baf7a",
+    "meta_rl": BLUE, "meta_rl_leaked": BLUE, "hmm": "#eb6834", "vol_regime": "#1baf7a",
     "equal_weight": "#eda100", "aggressive": RED, "balanced": "#6250d6",
     "conservative": "#008300", "cash": "#e87ba4", "buy_and_hold": INK,
     "vol_target_bh": INK2,
@@ -89,15 +93,21 @@ DARK_MAP = {
     BASELINE: "#383835", DIV_MID: "#383835", BLUE: "#3987e5",
     "#eb6834": "#d95926", "#1baf7a": "#199e70", "#eda100": "#c98500",
     RED: "#e66767", "#6250d6": "#9085e9", "#e87ba4": "#d55181",
+    TRAIN_BAR: "#a5a39b", VAL_BAR: "#6f6d67",
 }
 DIVERGING = [[0.0, RED], [0.5, DIV_MID], [1.0, BLUE]]
-DASH = {"buy_and_hold": "dash", "vol_target_bh": "dashdot"}
+DASH = {"buy_and_hold": "dash", "vol_target_bh": "dashdot", "meta_rl_leaked": "dot"}
 FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif'
+# A Sharpe above this on one index is treated as a sign of memorization
+OVERFIT_SHARPE = 3.0
+TRAINING_DATA = {"crossfit": "Out-of-sample agent behaviour",
+                 "in_sample_stream_dates": "In-sample agent behaviour",
+                 "in_sample": "In-sample agent behaviour"}
 # Draw benchmarks underneath and Meta-RL on top; legends read the other way.
 Z_RANK = {"buy_and_hold": 0, "vol_target_bh": 1, "equal_weight": 2,
           "vol_regime": 3, "hmm": 4, "conservative": 5, "balanced": 6,
-          "aggressive": 7, "meta_rl": 9}
-LEGEND_RANK = {"meta_rl": 1, "hmm": 2, "vol_regime": 3, "equal_weight": 4,
+          "aggressive": 7, "meta_rl_leaked": 8, "meta_rl": 9}
+LEGEND_RANK = {"meta_rl": 0, "meta_rl_leaked": 1, "hmm": 2, "vol_regime": 3, "equal_weight": 4,
                "aggressive": 5, "balanced": 6, "conservative": 7, "cash": 8,
                "vol_target_bh": 9, "buy_and_hold": 10}
 
@@ -145,8 +155,14 @@ def load_cell(path):
         idx = dates[sub["step"].values]
         wmap[name] = sub.drop(columns="step").set_index(idx).astype(float)
 
+    windows_path = os.path.join(path, "window_sharpe.csv")
+    windows = None
+    if os.path.isfile(windows_path):
+        windows = pd.read_csv(windows_path)
+        windows["proposals"] = windows["proposals"].fillna("")
+
     return {
-        "path": path, "returns": returns, "agent_ret": agent_ret,
+        "path": path, "returns": returns, "agent_ret": agent_ret, "windows": windows,
         "agent_pos": agent_pos, "exec_pos": exec_pos, "weights": wmap,
         "cost": cost, "eval_cfg": eval_cfg,
         "meta_cfg": _read_json(path, "models", "phase2", "config.json")
@@ -212,6 +228,11 @@ def build_run(run_id, cells, prices, wf_cells=None):
                               if n in c["weights"]]) for n in names},
         "regimes": regimes.reindex(returns.index),
     }
+    tables = [c["windows"] for c in cells if c["windows"] is not None]
+    run["windows"] = (pd.concat(tables).groupby(
+        ["model", "window", "proposals"], as_index=False)[["sharpe", "bh_sharpe"]].mean()
+        if tables else None)
+    run["windows_cells"] = len(tables)
     run["strategies"] = [s for s in ALLOCATORS + BENCHMARKS
                          if s in returns.columns]
     run["agents"] = [a for a in AGENTS if a in run["agent_ret"].columns]
@@ -416,12 +437,11 @@ def _by_z(names):
     return sorted(names, key=lambda n: Z_RANK.get(n, 8))
 
 
-def _end_labels(fig, x_end, ends):
+def _end_labels(fig, x_end, ends, axis_span):
     """Label line ends selectively: Meta-RL and benchmarks first, skip collisions."""
-    values = [v for _, v in ends]
-    gap = max((max(values) - min(values)) * 0.07, 1e-9)
+    gap = max(axis_span * 0.05, 1e-9)    # about one line of text on a 380px chart
     placed = []
-    order = {"meta_rl": 0, "buy_and_hold": 1, "vol_target_bh": 2}
+    order = {"meta_rl": 0, "buy_and_hold": 1, "vol_target_bh": 2, "meta_rl_leaked": 3}
     for name, y in sorted(ends, key=lambda e: order.get(e[0], 5)):
         if any(abs(y - p) < gap for p in placed):
             continue
@@ -439,7 +459,22 @@ def _subtitle_style(fig, left=True):
     return fig
 
 
+def _hide_date_gaps(fig):
+    """Remove the empty stretch between test years that are not consecutive."""
+    dates = next((t.x for t in fig.data if t.x is not None and len(t.x) > 1
+                  and re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(t.x[0]))), None)
+    if dates is None:
+        return
+    d = pd.to_datetime(list(dates))
+    breaks = [dict(bounds=[(a + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
+                           b.strftime("%Y-%m-%d")])
+              for a, b in zip(d[:-1], d[1:]) if (b - a).days > 20]
+    if breaks:
+        fig.update_xaxes(rangebreaks=breaks)
+
+
 def chart(title, sub, fig, span="half"):
+    _hide_date_gaps(fig)
     data = json.loads(fig.to_json())
     data["layout"].pop("template", None)
     return {"type": "chart", "title": title, "sub": sub, "span": span,
@@ -458,14 +493,15 @@ def block_html(markup, span="full"):
 def fig_equity(rets, hidden=()):
     x = _days(rets.index)
     fig = go.Figure()
-    ends = []
+    ends, low, high = [], np.inf, -np.inf
     for name in _by_z(rets.columns):
         eq = equity(rets[name].values)[1:]
         off = name in hidden
         fig.add_trace(_line_trace(x, eq, name, hidden=off))
         if not off:
             ends.append((name, float(eq[-1])))
-    _end_labels(fig, x[-1], ends)
+            low, high = min(low, eq.min()), max(high, eq.max())
+    _end_labels(fig, x[-1], ends, high - low)
     return _style(fig, height=380, right=104, yfmt=".2f",
                   ytitle="Equity (start = 1.0)")
 
@@ -732,7 +768,8 @@ def fig_weight_stacks(run):
 
 
 def fig_weights_by_regime(run):
-    names = [a for a in ("meta_rl", "hmm", "vol_regime") if a in run["weights"]]
+    names = [a for a in ("meta_rl", "meta_rl_leaked", "hmm", "vol_regime")
+             if a in run["weights"]]
     fig = make_subplots(rows=1, cols=len(names), shared_yaxes=True,
                         horizontal_spacing=0.04,
                         subplot_titles=[label(n) for n in names])
@@ -824,6 +861,26 @@ def fig_proposals(run, height=340):
     ))
     fig.add_hline(y=0, line=dict(color=MUTED, width=1))
     return _style(fig, height=height, yfmt=".1f", ytitle="Position (1.0 = fully long)")
+
+
+def fig_overfit(rows):
+    """Train, validation and test Sharpe side by side for each model."""
+    x = [r["short"] for r in rows]
+    fig = go.Figure()
+    for key, name, color in (("train", "Training data", TRAIN_BAR),
+                             ("val", "Validation data", VAL_BAR),
+                             ("test", "Test data", BLUE)):
+        fig.add_trace(go.Bar(
+            x=x, y=_vals([r[key] for r in rows], 3), name=name,
+            marker=dict(color=color, cornerradius=4),
+            hovertemplate=f"<b>%{{y:.2f}}</b> {name}, %{{x}}<extra></extra>",
+        ))
+    fig.update_layout(barmode="group", bargap=0.3, bargroupgap=0.08)
+    _style(fig, height=380, hover="closest", date_x=False, yfmt=".1f",
+           ytitle="Annualized Sharpe")
+    fig.update_xaxes(type="category", tickfont=dict(size=11, color=INK2))
+    fig.update_layout(margin=dict(b=48))
+    return fig
 
 
 def fig_per_fold(per_fold):
@@ -985,12 +1042,16 @@ def takeaway(run, tests):
         if bench in m.index:
             other = f"{label(bench)} ({m.loc[bench, 'Sharpe']:.2f})"
             phrases.append(_comparison_phrase(p_by_name[bench], other))
-    rule = [a for a in ALLOCATORS[1:] if a in m.index]
+    rule = [a for a in RULE_ALLOCATORS if a in m.index]
     if rule:
         best = max(rule, key=lambda a: m.loc[a, "Sharpe"])
         other = (f"the best rule-based allocator, {label(best)} "
                  f"({m.loc[best, 'Sharpe']:.2f})")
         phrases.append(_comparison_phrase(p_by_name[best], other))
+    if "meta_rl_leaked" in m.index:
+        other = (f"the same meta-agent trained on in-sample agent behaviour "
+                 f"({m.loc['meta_rl_leaked', 'Sharpe']:.2f})")
+        phrases.append(_comparison_phrase(p_by_name["meta_rl_leaked"], other))
     text = (f"Meta-RL Sharpe is {meta['Sharpe']:.2f} "
             f"(95% CI {meta['CI lo']:.2f} to {meta['CI hi']:.2f}).")
     if phrases:
@@ -1010,23 +1071,149 @@ def runs_table(runs):
     for run in runs:
         m, cell = run["metrics"], run["cells"][0]
         p0, p2 = run_steps(run)
-        train = (f"{cell['meta_cfg'].get('train_start', '?')} to "
-                 f"{cell['meta_cfg'].get('train_end', '?')}"
+        train = (f"{cell['meta_cfg'].get('train_start', '?')[:4]}–"
+                 f"{cell['meta_cfg'].get('train_end', '?')[:4]}"
                  if not run["wf_cells"] else "rolling")
+        dates = run["returns"].index
+        test = (str(dates[0].year) if dates[0].year == dates[-1].year
+                else f"{dates[0].year}–{dates[-1].year}")
         sharpe = lambda n: f"{m.loc[n, 'Sharpe']:.2f}" if n in m.index else "–"
-        rule = [a for a in ALLOCATORS[1:] if a in m.index]
+        rule = [a for a in RULE_ALLOCATORS if a in m.index]
         best = max((m.loc[a, "Sharpe"] for a in rule), default=np.nan)
+        table = window_rows(run)
+        agents_train = [r["train"] for r in table if r["model"] in run["agents"]]
+        meta_train = [r["train"] for r in table if r["model"] == "meta_rl"]
+        mode = cell["meta_cfg"].get("training_mode", "in_sample")
         rows.append([
-            run["id"], train, run_window(run),
+            run["id"], train, test,
             f"{p0:,}" if p0 else "?", f"{p2:,}" if p2 else "?",
-            f"{cell['cost'] * 1e4:.1f}", sharpe("meta_rl"),
-            "–" if np.isnan(best) else f"{best:.2f}",
+            f"{cell['cost'] * 1e4:.1f}",
+            "Out-of-sample" if mode == "crossfit" else "In-sample",
+            f"{np.nanmean(agents_train):.2f}" if agents_train else "–",
+            f"{meta_train[0]:.2f}" if meta_train else "–",
+            sharpe("meta_rl"), "–" if np.isnan(best) else f"{best:.2f}",
             sharpe("vol_target_bh"), sharpe("buy_and_hold"),
         ])
     return _table(["Run", "Train", "Test", "Agent steps", "Meta steps", "Cost (bp)",
-                   "Meta-RL", "Best rule", "Vol-target B&H", "Buy & hold"], rows,
-                  caption="Sharpe of every run. Test windows differ, so compare "
-                          "each row against its own benchmarks.")
+                   "Meta trained on", "Agents, train", "Meta-RL, train", "Meta-RL",
+                   "Best rule", "Vol-target B&H", "Buy & hold"], rows,
+                  caption="Sharpe of every run, on test data unless marked train. "
+                          "Test windows differ, so compare each row against its own "
+                          "benchmarks.")
+
+
+def window_rows(run):
+    """One row per model and training-data kind for the overfitting check."""
+    windows = run["windows"]
+    if windows is None:
+        return []
+    metrics = run["metrics"]
+
+    def value(model, window, proposals, column="sharpe"):
+        hit = windows[(windows["model"] == model) & (windows["window"] == window)
+                      & (windows["proposals"] == proposals)]
+        return float(hit[column].iloc[0]) if len(hit) else np.nan
+
+    rows = []
+    for model in run["agents"]:
+        rows.append({"model": model, "name": label(model), "short": label(model),
+                     "seen": "–", "train": value(model, "train", ""),
+                     "val": value(model, "val", ""),
+                     "stream": value(model, "stream", "out_of_sample"),
+                     "test": float(metrics.loc[model, "Sharpe"]),
+                     "bh": value(model, "train", "", "bh_sharpe")})
+    for model in ("equal_weight", "meta_rl", "meta_rl_leaked"):
+        if model not in metrics.index:
+            continue
+        for kind, seen in (("in_sample", "In-sample"), ("out_of_sample", "Out-of-sample")):
+            train = value(model, "train", kind)
+            if np.isnan(train):
+                continue
+            short = label(model)
+            if model == "equal_weight":
+                short = f"{short}<br>({seen.lower()})"
+            rows.append({"model": model, "name": label(model), "short": short,
+                         "seen": seen, "train": train,
+                         "val": value(model, "val", kind), "stream": np.nan,
+                         "test": float(metrics.loc[model, "Sharpe"]),
+                         "bh": value(model, "train", kind, "bh_sharpe")})
+    return rows
+
+
+def overfit_summary(run):
+    """(sentence, warning or empty) for one run; (empty, empty) without data."""
+    rows = window_rows(run)
+    if not rows:
+        return "", ""
+    agents = [r for r in rows if r["model"] in run["agents"]]
+    meta = [r for r in rows if r["model"] == "meta_rl"]
+    text = ""
+    worst = 0.0
+    if agents:
+        train = float(np.nanmean([r["train"] for r in agents]))
+        test = float(np.nanmean([r["test"] for r in agents]))
+        bh = float(np.nanmean([r["bh"] for r in agents]))
+        worst = max(worst, train)
+        text = (f"Agents average a Sharpe of {train:.2f} on their training data and "
+                f"{test:.2f} on the test window; buy-and-hold made {bh:.2f} on the "
+                f"same training days.")
+    if meta:
+        worst = max(worst, meta[0]["train"])
+        text += (f" Meta-RL scores {meta[0]['train']:.2f} on its training data and "
+                 f"{meta[0]['test']:.2f} on test.")
+    warning = ""
+    if worst >= OVERFIT_SHARPE:
+        warning = (f"A training Sharpe above {OVERFIT_SHARPE:.0f} on one index usually "
+                   f"means a model memorized its training path, so its test result "
+                   f"is the number to trust.")
+    return text, warning
+
+
+def section_overfitting(run):
+    rows = window_rows(run)
+    if not rows:
+        message = (
+            '<p class="muted">Not available for this run. To create it, run '
+            f"<code>python overfit_check.py --rundir {_esc(run['id'])}</code> on the "
+            "machine that holds the model files.</p>")
+        if run["wf_cells"]:
+            message = (
+                '<p class="muted">Not available for this run. To create it, run '
+                "<code>python overfit_check.py --rundir &lt;cell folder&gt;</code> for "
+                "each fold and seed on the machine that holds the model files.</p>")
+        return {"id": "overfitting", "title": "Overfitting check", "intro": "",
+                "blocks": [block_html(message)]}
+
+    text, warning = overfit_summary(run)
+    fmt = lambda v: "–" if np.isnan(v) else f"{v:.2f}"
+    has_stream = any(np.isfinite(r["stream"]) for r in rows)
+    table = []
+    for r in rows:
+        row = [r["name"], r["seen"], fmt(r["train"]), fmt(r["val"])]
+        if has_stream:
+            row.append(fmt(r["stream"]))
+        row += [fmt(r["test"]), fmt(r["train"] - r["test"]), fmt(r["bh"])]
+        table.append(row)
+    headers = ["Model", "Agent behaviour in its training data", "Train", "Validation"]
+    if has_stream:
+        headers.append("Out-of-sample blocks")
+    headers += ["Test", "Train − test", "Buy & hold, train"]
+    flag = f'<p class="flag">{_esc(warning)}</p>' if warning else ""
+    note = ""
+    if run["wf_cells"] and run["windows_cells"] < len(run["cells"]):
+        note = (f'<p class="muted">Averaged over the {run["windows_cells"]} of '
+                f'{len(run["cells"])} cells that have window_sharpe.csv.</p>')
+    blocks = [
+        block_html(f'<p class="takeaway">{_esc(text)}</p>{flag}{note}'),
+        chart("Sharpe on training, validation and test data",
+              "A model that learned something real scores similarly on all three. A "
+              "tall training bar over a low test bar means it memorized.",
+              fig_overfit(rows), "full"),
+        block_html(_table(headers, table, caption="Sharpe by window")),
+    ]
+    return {"id": "overfitting", "title": "Overfitting check",
+            "intro": "Each model scored on the data it was fitted to, the data it was "
+                     "selected on, and the test window.", "blocks": blocks}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1058,6 +1245,11 @@ def section_overview(run, runs, tests):
         note = (f'<p class="flag">Short training budget ({p0:,} agent steps, '
                 f"{p2:,} meta steps). This run checks the pipeline; it is not "
                 f"a thesis result.</p>")
+    fit_text, fit_warning = overfit_summary(run)
+    if fit_text:
+        note = (f'<p class="muted">{_esc(fit_text)}</p>'
+                + (f'<p class="flag">{_esc(fit_warning)}</p>' if fit_warning else "")
+                + note)
     blocks = [block_html(
         f'<div class="tiles">{"".join(tiles)}</div>'
         f'<p class="takeaway">{_esc(takeaway(run, tests))}</p>'
@@ -1236,7 +1428,8 @@ def section_walkforward(run):
                  f"{r['sharpe_diff']:+.2f}", f"{r['p_value_H0_diff<=0']:.3f}"]
                 for _, r in res["tests"].iterrows()]
         for row in rows:
-            for key in ("equal_weight", "vol_target_bh", "buy_and_hold"):
+            for key in ("meta_rl_leaked", "equal_weight", "vol_target_bh",
+                        "buy_and_hold"):
                 row[0] = row[0].replace(key, label(key))
         blocks.append(block_html("<h3>Paired bootstrap tests, pooled</h3>" + _table(
             ["Comparison", "Sharpe difference", "p (H0: difference ≤ 0)"], rows)))
@@ -1263,6 +1456,14 @@ def section_details(run):
         items.insert(1, ("Train window", f"{meta.get('train_start', '?')} to "
                                          f"{meta.get('train_end', '?')}"))
         items.append(("Seed", meta.get("seed", "unknown")))
+    mode = meta.get("training_mode", "in_sample")
+    items += [
+        ("Meta-agent training data", TRAINING_DATA.get(mode, mode)),
+        ("Meta-agent episodes", f"{meta['episode_bars']} bars, random start"
+         if meta.get("episode_bars") else "One fixed path"),
+    ]
+    if meta.get("crossfit_folds"):
+        items.append(("Cross-fit folds", meta["crossfit_folds"]))
     items += [
         ("Meta reward", meta.get("meta_reward", "unknown")),
         ("Cash arm", onoff(meta.get("use_cash"))),
@@ -1295,8 +1496,8 @@ def section_details(run):
                      f"{m.loc['meta_rl', 'Sharpe']:.2f}"])
     agents_html = _table(["Model", "lam_var", "Max pos", "DD free / max",
                           "Val. Sharpe", "Test Sharpe"], rows,
-                         caption="A large drop from validation to test points to "
-                                 "overfitting or a regime change.")
+                         caption="Best validation Sharpe saved during training, "
+                                 "which is biased upward by checkpoint selection.")
     method = (
         '<p class="muted">All returns are daily, simple and net of transaction costs. '
         "Sharpe uses no risk-free rate and annualizes by √252. Intervals are stationary "
@@ -1317,6 +1518,7 @@ def build_payload(runs, window):
                     section_walkforward(run),
                     section_agents(run, window),
                     section_models(run, window, tests),
+                    section_overfitting(run),
                     section_details(run)]
         payload.append({"id": run["id"],
                         "sections": [s for s in sections if s]})
@@ -1392,6 +1594,7 @@ h3 { font-size: 14px; font-weight: 600; margin: 0; }
 .tile-note { font-size: 13px; color: var(--muted); }
 .takeaway { margin: 14px 0 2px; }
 .muted { margin: 6px 0; font-size: 13px; color: var(--ink2); }
+code { font-size: 12px; overflow-wrap: anywhere; }
 .flag { margin: 8px 0; padding: 7px 10px; border-radius: 6px; font-size: 13px;
         background: var(--flag-bg); color: var(--flag-ink); }
 .table-wrap { overflow-x: auto; }

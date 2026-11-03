@@ -110,3 +110,23 @@ days sequential — trim to 5 folds × 3 seeds or 9 × 2 if needed; keep at leas
 The committed CSVs/models predate these changes (and were themselves mixed
 configs — see analysis doc F9). Regenerate everything through `run_all.py` /
 `walk_forward.py` before citing numbers.
+
+---
+
+# November 2026: cross-fitted meta training and the overfitting check
+
+Follows the diagnosis in *claude/results-diagnosis-2026-11.md* in the claude.ai project: agents
+scored a Sharpe of 5 to 9 on their training data and around zero on test, and 94% of the
+meta-agent's training days were days the agents had been fitted to.
+
+| ID | Change | Where |
+|----|--------|-------|
+| R12 | **Cross-fitted meta training.** `--crossfit` refits agents and HMM on the bars before each block at the end of the training window, records what they propose on that block, and trains the meta-agent only on that stream. The last block is validation. | `train_crossfit.py`, `common/crossfit.py`, `env/meta_env.py`, `train_phase2.py` |
+| R13 | **Paired leak ablation.** Each cross-fitted run also trains `meta_rl_leaked` on the same dates, budget and seed with the final agents' in-sample behaviour, and evaluates it on the same test path. | `train_phase2.py --stream_dates`, `evaluate_phase2.py` |
+| R14 | **Random-start meta episodes.** F11 had only reached the agents, so the meta-agent replayed one fixed path. On by default for both meta-agents above; `--episode_bars` sets it anywhere. | `env/meta_env.py`, `train_phase2.py` |
+| R15 | **Seed study for the ablation.** Retrains only the two meta-agents across seeds with agents, HMM and stream fixed. | `meta_seed_study.py` |
+| F13 | **Overfitting check for every run.** `window_sharpe.csv` records each model's Sharpe on its training and validation data, and the dashboard shows it next to test. | `overfit_check.py`, `dashboard.py` |
+| F14 | **Agent stability check.** Rolls every fold's agents and the final agents over the test year and compares their actions and Sharpe. | `agent_stability.py` |
+
+Runs without `--crossfit` behave exactly as before, so older results stay comparable.
+

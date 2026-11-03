@@ -21,7 +21,7 @@ import config
 BARS_PER_YEAR = config.BARS_PER_YEAR
 
 
-def train_split(prices, ratio=0.8):
+def train_split(prices, ratio=config.AGENT_TRAIN_RATIO):
     split = int(len(prices) * ratio)
     return prices.iloc[:split], prices.iloc[split:]
 
