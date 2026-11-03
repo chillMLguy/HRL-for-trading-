@@ -126,6 +126,7 @@ meta-agent's training days were days the agents had been fitted to.
 | R14 | **Random-start meta episodes.** F11 had only reached the agents, so the meta-agent replayed one fixed path. On by default for both meta-agents above; `--episode_bars` sets it anywhere. | `env/meta_env.py`, `train_phase2.py` |
 | R15 | **Seed study for the ablation.** Retrains only the two meta-agents across seeds with agents, HMM and stream fixed. | `meta_seed_study.py` |
 | F13 | **Overfitting check for every run.** `window_sharpe.csv` records each model's Sharpe on its training and validation data, and the dashboard shows it next to test. | `overfit_check.py`, `dashboard.py` |
+| F14 | **Agent stability check.** Rolls every fold's agents and the final agents over the test year and compares their actions and Sharpe. | `agent_stability.py` |
 
 Runs without `--crossfit` behave exactly as before, so older results stay comparable.
 
