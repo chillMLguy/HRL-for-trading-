@@ -198,3 +198,5 @@ runs/latest/
 /phase[0-9]_*.csv
 /equity_curves.csv
 /regime_table.csv
+runs/**/crossfit/fold*/proposals.csv
+runs/**/meta_seeds/

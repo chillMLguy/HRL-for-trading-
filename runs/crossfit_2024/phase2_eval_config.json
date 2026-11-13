@@ -1,0 +1,49 @@
+{
+  "ticker": "^DJI",
+  "test_start": "2024-01-01",
+  "test_end": "2024-12-31",
+  "cost_pct": 0.0002,
+  "meta_model": "best_model",
+  "warm_bars": 269,
+  "meta_cfg": {
+    "ticker": "^DJI",
+    "train_start": "2013-01-01",
+    "train_end": "2023-12-31",
+    "interval": "1d",
+    "bars_per_year": 252,
+    "cost_pct": 0.0002,
+    "seed": 42,
+    "timesteps": 40000,
+    "net_arch": [
+      64,
+      64
+    ],
+    "use_cash": true,
+    "vol_target": 0.1,
+    "vol_target_cap": 1.5,
+    "meta_reward": "dsr",
+    "dsr_eta": 0.016666666666666666,
+    "lam_var_meta": 12.0,
+    "alpha": 0.05,
+    "beta": 0.05,
+    "dd_free": 0.03,
+    "dd_max": 0.1,
+    "logit_scale": 2.0,
+    "perf_window": 20,
+    "use_hmm": true,
+    "use_cnn": false,
+    "agent_order": [
+      "aggressive",
+      "balanced",
+      "conservative"
+    ],
+    "training_mode": "crossfit",
+    "episode_bars": 252,
+    "val_frac": 0.15,
+    "crossfit_folds": 4,
+    "train_bars": 1038,
+    "val_bars": 345,
+    "obs_dim": 23,
+    "best_val_sharpe": 0.6230691074683822
+  }
+}

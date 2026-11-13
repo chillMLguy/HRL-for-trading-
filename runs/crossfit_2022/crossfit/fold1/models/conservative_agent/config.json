@@ -1,0 +1,20 @@
+{
+  "agent": "conservative",
+  "preset": {
+    "lam_var": 40.0,
+    "max_pos": 0.3,
+    "dd_free": 0.02,
+    "dd_max": 0.08
+  },
+  "seed": 1044,
+  "timesteps": 50000,
+  "net_arch": [
+    64,
+    64
+  ],
+  "cost_pct": 0.0002,
+  "bars_per_year": 252,
+  "episode_bars": 504,
+  "reward": "quadratic_utility+dd_zones",
+  "best_val_sharpe": 0.9349890807311222
+}

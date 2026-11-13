@@ -9,6 +9,9 @@ Outputs (under --outdir):
   phase2_equity_curves.csv   phase2_returns.csv (per-step, for aggregation)
   phase2_weights.csv         phase2_actions.csv
   phase2_metrics.csv
+
+If models/phase2_leaked exists (run_all.py --crossfit), that meta-agent is rolled
+over the same test path too and reported as meta_rl_leaked.
 """
 
 import argparse
@@ -21,7 +24,7 @@ import numpy as np
 import pandas as pd
 from stable_baselines3 import SAC
 
-from env.meta_env import MetaTradingEnv, load_subagents, detect_cnn_path
+from env.meta_env import load_subagents, detect_cnn_path, meta_env_from_config
 from evaluate_agents import (buy_and_hold, vol_target_buy_and_hold,
                              label_regimes, compute_metrics, sharpe)
 from evaluate_phase1 import run_allocator, sanity_checks, trained_cost
@@ -34,6 +37,7 @@ import config
 
 BARS_PER_YEAR = config.BARS_PER_YEAR
 META_NAME = "meta_rl"
+LEAKED_NAME = "meta_rl_leaked"
 
 
 def run_meta_agent(meta_model, env):
@@ -143,25 +147,27 @@ def main():
 
     # ── 4. Run the meta-agent (env rebuilt from training config) ──────────
     print("\n  Running meta-RL allocator ...")
-    meta_env = MetaTradingEnv(
-        prices, subagents, hmm_detector=use_hmm_in_env, ann=ann,
-        cost_pct=cost,
-        use_cash=meta_cfg.get("use_cash", config.META_USE_CASH),
-        vol_target=meta_cfg.get("vol_target", config.VOL_TARGET),
-        vol_target_cap=meta_cfg.get("vol_target_cap", config.VOL_TARGET_CAP),
-        meta_reward=meta_cfg.get("meta_reward", config.META_REWARD),
-        dsr_eta=meta_cfg.get("dsr_eta", config.DSR_ETA),
-        lam_var_meta=meta_cfg.get("lam_var_meta", 12.0),
-        alpha=meta_cfg.get("alpha", 0.05), beta=meta_cfg.get("beta", 0.05),
-        dd_free=meta_cfg.get("dd_free", 0.03),
-        dd_max=meta_cfg.get("dd_max", 0.10),
-        logit_scale=meta_cfg.get("logit_scale", 2.0),
-        perf_window=meta_cfg.get("perf_window", 20),
-        start_index=start_idx, eval_mode=True, cnn_model_path=cnn_path,
-    )
+    meta_env = meta_env_from_config(
+        prices, subagents, use_hmm_in_env, meta_cfg, cost, ann=ann,
+        start_index=start_idx, eval_mode=True, cnn_model_path=cnn_path)
     results = {META_NAME: run_meta_agent(meta_model, meta_env)}
     eq = results[META_NAME]["equity"]
     print(f"    Final equity: {eq[-1]:.4f}  ({(eq[-1]/eq[0]-1)*100:+.2f}%)")
+
+    # Paired comparison: same agents and test path, in-sample training data
+    leaked_path = os.path.join(args.modeldir, "models", "phase2_leaked",
+                               args.meta_model)
+    if os.path.isfile(leaked_path + ".zip"):
+        print(f"\n  Running {LEAKED_NAME} comparison ...")
+        with open(os.path.join(os.path.dirname(leaked_path), "config.json")) as f:
+            leaked_cfg = json.load(f)
+        leaked_env = meta_env_from_config(
+            prices, subagents, hmm if leaked_cfg.get("use_hmm", True) else None,
+            leaked_cfg, cost, ann=ann, start_index=start_idx, eval_mode=True,
+            cnn_model_path=cnn_path)
+        results[LEAKED_NAME] = run_meta_agent(SAC.load(leaked_path), leaked_env)
+        eq = results[LEAKED_NAME]["equity"]
+        print(f"    Final equity: {eq[-1]:.4f}  ({(eq[-1]/eq[0]-1)*100:+.2f}%)")
 
     # ── 5. Phase 1 baselines on the same window ───────────────────────────
     th_path = os.path.join(p1dir, "vol_thresholds.json")
@@ -257,7 +263,7 @@ def main():
             row = {"step": step, "allocator": name}
             for i, agent_name in enumerate(AGENT_ORDER):
                 row[f"w_{agent_name}"] = w[step, i]
-            if name == META_NAME:
+            if name in (META_NAME, LEAKED_NAME):
                 row["w_cash"] = results[name]["w_cash"][step]
                 row["lever"]  = results[name]["lever"][step]
             rows.append(row)

@@ -1,0 +1,11 @@
+seed,kind,val_sharpe,test_sharpe,mean_abs_position,total_return_pct
+42,crossfit,2.128,0.344,0.11,1.04
+42,leaked,2.098,1.008,0.109,2.71
+0,crossfit,1.743,0.707,0.122,2.16
+0,leaked,2.115,0.558,0.113,1.6
+1,crossfit,2.075,0.08,0.116,0.19
+1,leaked,2.078,1.119,0.115,3.01
+2,crossfit,1.77,0.816,0.125,2.46
+2,leaked,2.088,0.702,0.129,2.23
+3,crossfit,2.504,0.92,0.096,2.11
+3,leaked,2.231,0.871,0.134,2.81

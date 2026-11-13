@@ -1,0 +1,43 @@
+{
+  "folds": 4,
+  "min_train_frac": 0.5,
+  "train_start": "2011-01-01",
+  "train_end": "2021-12-31",
+  "cost_pct": 0.0002,
+  "seed": 42,
+  "agent_order": [
+    "aggressive",
+    "balanced",
+    "conservative"
+  ],
+  "blocks": [
+    {
+      "fold": 1,
+      "fit_start": "2011-01-01",
+      "fit_end": "2016-07-05",
+      "block_start": "2016-07-05",
+      "block_last": "2017-11-14"
+    },
+    {
+      "fold": 2,
+      "fit_start": "2011-01-01",
+      "fit_end": "2017-11-15",
+      "block_start": "2017-11-15",
+      "block_last": "2019-04-03"
+    },
+    {
+      "fold": 3,
+      "fit_start": "2011-01-01",
+      "fit_end": "2019-04-04",
+      "block_start": "2019-04-04",
+      "block_last": "2020-08-17"
+    },
+    {
+      "fold": 4,
+      "fit_start": "2011-01-01",
+      "fit_end": "2020-08-18",
+      "block_start": "2020-08-18",
+      "block_last": "2021-12-30"
+    }
+  ]
+}

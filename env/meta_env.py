@@ -20,6 +20,9 @@ original version:
     mean–variance composite for ablation.
   * F8 — pass `start_index` so evaluation windows include warm feature/HMM
     history but trading starts exactly at the test boundary.
+  * Cross-fitted training — pass `proposal_stream` and `hmm_stream` to replay
+    recorded out-of-sample behaviour instead of querying live agents (see
+    common/crossfit.py), and `train_episode_bars` for random-start episodes.
 
 Meta-observation layout (K = HMM states, N = number of sub-agents, C = 1 if
 cash arm else 0):
@@ -98,6 +101,22 @@ def ewma_vol_series(prices, span=CFG.VOL_EWMA_SPAN, bars_per_year=252):
     return out
 
 
+def meta_env_from_config(prices, subagents, hmm_detector, cfg, cost_pct, **kwargs):
+    """Build the env a saved meta-agent was trained for, from its config.json."""
+    return MetaTradingEnv(
+        prices, subagents, hmm_detector=hmm_detector, cost_pct=cost_pct,
+        use_cash=cfg.get("use_cash", CFG.META_USE_CASH),
+        vol_target=cfg.get("vol_target", CFG.VOL_TARGET),
+        vol_target_cap=cfg.get("vol_target_cap", CFG.VOL_TARGET_CAP),
+        meta_reward=cfg.get("meta_reward", CFG.META_REWARD),
+        dsr_eta=cfg.get("dsr_eta", CFG.DSR_ETA),
+        lam_var_meta=cfg.get("lam_var_meta", 12.0),
+        alpha=cfg.get("alpha", 0.05), beta=cfg.get("beta", 0.05),
+        dd_free=cfg.get("dd_free", 0.03), dd_max=cfg.get("dd_max", 0.10),
+        logit_scale=cfg.get("logit_scale", 2.0),
+        perf_window=cfg.get("perf_window", 20), **kwargs)
+
+
 class DifferentialSharpe:
     """
     Moody & Saffell's Differential Sharpe Ratio on percent-scale returns.
@@ -154,6 +173,12 @@ class MetaTradingEnv(gym.Env):
     perf_window     : trailing window for the shadow performance features
     start_index     : F8 — first bar at which trading starts
     eval_mode       : True → no drawdown termination, full window
+    proposal_stream : optional (n_bars, N) array of recorded agent actions in
+                      [-1, 1], one row per bar of `prices`.  Replaces `subagents`.
+    hmm_stream      : optional (n_bars, K) array of recorded posteriors.  Replaces
+                      `hmm_detector`.
+    train_episode_bars : if > 0 and not eval_mode, each episode is a random window
+                      of this many bars.  0 = always replay the full path.
     """
 
     metadata = {"render_modes": []}
@@ -181,6 +206,9 @@ class MetaTradingEnv(gym.Env):
         eval_mode:    bool  = False,
         cnn_model_path: str = None,
         deterministic_subagents: bool = True,
+        proposal_stream = None,
+        hmm_stream = None,
+        train_episode_bars: int = 0,
     ):
         super().__init__()
 
@@ -209,6 +237,7 @@ class MetaTradingEnv(gym.Env):
             bars_per_year=ann, cost_pct=cost_pct,
             dd_free=dd_free, dd_max=dd_max, eval_mode=eval_mode,
             cnn_model_path=cnn_model_path, start_index=start_index,
+            train_episode_bars=train_episode_bars,
         )
         self.warmup      = self._env.warmup
         self.start_index = self._env.start_index
@@ -220,11 +249,25 @@ class MetaTradingEnv(gym.Env):
         # Vol-target leverage series (causal)
         self._ewma_vol = ewma_vol_series(prices, bars_per_year=ann)
 
+        # Recorded behaviour (cross-fitted training) replaces live models
+        self._stream = None
+        if proposal_stream is not None:
+            self._stream = np.asarray(proposal_stream, dtype=np.float64)
+            if len(self._stream) != len(prices):
+                raise ValueError("proposal_stream needs one row per price bar")
+        self._hmm_stream = None
+        if hmm_stream is not None:
+            self._hmm_stream = np.asarray(hmm_stream, dtype=np.float64)
+            if len(self._hmm_stream) != len(prices):
+                raise ValueError("hmm_stream needs one row per price bar")
+
         # HMM causal posteriors precomputed once over the full series
         self._K = hmm_detector.n_states if hmm_detector is not None else 0
+        if self._hmm_stream is not None:
+            self._K = self._hmm_stream.shape[1]
         self._post = None
         self._valid_start = 0
-        if hmm_detector is not None:
+        if hmm_detector is not None and self._hmm_stream is None:
             obs, self._valid_start = HMMRegimeDetector.build_observations(prices)
             self._post = hmm_detector.filtered_proba(obs)
 
@@ -252,6 +295,13 @@ class MetaTradingEnv(gym.Env):
 
     def _propose(self):
         a = np.zeros(N_AGENTS, dtype=np.float64)
+        if self._stream is not None:
+            # Bars outside the recorded window are only ever seen as the terminal
+            # observation of an episode, never traded on.
+            a = np.clip(np.nan_to_num(self._stream[self._env.t]), -1.0, 1.0)
+            self._proposals_a   = a
+            self._proposals_pos = a * self._caps
+            return
         for i, name in enumerate(AGENT_ORDER):
             model = self.subagents.get(name)
             if model is None:
@@ -265,6 +315,9 @@ class MetaTradingEnv(gym.Env):
     # ── HMM posterior lookup (causal) ──────────────────────────────────────
 
     def _hmm_post(self, t):
+        if self._hmm_stream is not None:
+            row = self._hmm_stream[t]
+            return row if np.isfinite(row).all() else np.full(self._K, 1.0 / self._K)
         if self._post is None:
             return np.empty(0, dtype=np.float64)
         i = t - self._valid_start
@@ -308,7 +361,7 @@ class MetaTradingEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        self._env.reset()
+        self._env.reset(seed=seed)
         self._books.reset(self._env.t)
         self._dsr.reset()
         self._prev_w = np.full(self._n_act, 1.0 / self._n_act)
