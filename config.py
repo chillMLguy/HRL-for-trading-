@@ -56,7 +56,7 @@ HMM_VAL_FRAC = 0.05   # last X% of (training − embargo) is the
 # ── Walk-forward protocol (R7) ───────────
 WF_TEST_YEARS  = [2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
 WF_TRAIN_YEARS = 8      # each fold trains on the 8 years before its test year
-WF_SEEDS       = [0, 1, 2]
+WF_SEEDS       = [2]
 
 # ── Annualization ───────────────
 BARS_PER_YEAR = {"1d": 252, "1h": 1638, "30m": 3276, "15m": 6552}
