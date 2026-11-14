@@ -152,6 +152,10 @@ ALLOC_SEEDS_QUICK    = 2
 ALLOC_SHARPE_CLIP    = 3.0           # sleeve-performance input, clipped then / 3
 ALLOC_DD_SCALE       = 10.0          # drawdown input × 10, clipped to [0, 3]
 ALLOC_DD_CLIP        = 3.0
+ALLOC_LOGK_CLIP      = 2.0           # core-scale input ln k, clipped
+ALLOC_CF_SEEDS       = 3             # seeds per held-out block when scoring an allocator
+ALLOC_CF_SEEDS_QUICK = 1
+ALLOC_PURGE_AFTER    = 60            # training days skipped after a held-out block
 
 # Both learners
 MULTI_NET_ARCH     = [64, 64]

@@ -20,7 +20,13 @@ Milestone M2 (specialists):
    5  constant action         a constant tilt earns nothing on average over the fit window
   11  ensemble                one model = its action, several = their mean, reproducible
   12  cross-fit dates         every stream row comes from models fitted before its block
-Tests 3 (allocator), 4 and 5 (allocator), 9 and 10 arrive with the allocator (M3).
+
+Milestone M3 (allocator):
+   3  neutral identity        the zero action gives the fixed-budget positions, reward 0
+   4  reward timing           one step pays the H days' returns from d to d+1
+   5  constant action         a constant non-zero action earns nothing on average
+   9  budget mapping          beta_base at zero, sums to 1, ratios in [1/2.25, 2.25]
+  10  weekly hold             beta and G change only every H trading days
 """
 import json
 import os
@@ -473,6 +479,112 @@ sc12, _ = stream_scores(stream, inp12)
 check("12: rerunning reuses every finished fold (resumable)",
       build_stream(inp12, 2015, run12, folds=2, seeds=1, steps=300, workers=1)
       .equals(stream) and np.isfinite(sc12["spec_active_sharpe"]))
+
+# ── Milestone M3: allocator ─────────────────────────────────────────────────
+from multi.alloc_env import (AllocInputs, AllocatorEnv, budgets_from_action,
+                             gross_from_action, run_allocator)
+from train_allocator import train_days
+
+print("9. budget mapping")
+rng9 = np.random.default_rng(9)
+base9 = np.asarray(config.MULTI_BASE_BUDGETS)
+U = np.vstack([rng9.uniform(-1, 1, (2000, N)), np.eye(N), -np.eye(N),
+               np.where(np.eye(N) > 0, 1.0, -1.0), np.where(np.eye(N) > 0, -1.0, 1.0)])
+B9 = budgets_from_action(U)
+ratio9 = B9 / base9
+check("9: the zero action gives beta_base", np.array_equal(budgets_from_action(np.zeros(N)), base9))
+check("9: budgets sum to 1", np.abs(B9.sum(axis=1) - 1).max() < 1e-12)
+check(f"9: every beta / beta_base in [1/2.25, 2.25] (range {ratio9.min():.4f}–{ratio9.max():.4f})",
+      ratio9.min() >= 1 / 2.25 - 1e-12 and ratio9.max() <= 2.25 + 1e-12)
+G9 = gross_from_action(rng9.uniform(-1, 1, 1000))
+check("9: G in [0.75, 1.25] and G = 1 for g = 0",
+      G9.min() >= 0.75 and G9.max() <= 1.25 and gross_from_action(0.0) == 1.0)
+
+# a synthetic stream on INP: tilts and HMM posteriors on bars 320 .. 879
+S0, S1 = 320, 880
+m_syn = np.ones((T, N))
+m_syn[S0:S1] = 1 + rng9.uniform(-1, 1, (S1 - S0, N))
+hmm_syn = np.full((T, 3), np.nan)
+hmm_syn[S0:S1] = rng9.dirichlet(np.ones(3), S1 - S0)
+AI = AllocInputs(INP, m_syn, hmm_syn)
+
+print("3. neutral identity (allocator environment)")
+z3 = run_allocator(None, AI, S0, S1, policy=lambda o: np.zeros(N + 1))
+check("3: AllocatorEnv with the zero action returns the fixed-budget positions exactly",
+      np.array_equal(z3["x"], AI.x_fix[S0:S1]))
+check("3: ... and reward 0 at every step (costs and turnover penalty on)",
+      all(r == 0.0 for r in z3["rewards"]))
+env3 = AllocatorEnv(AI, train_days=np.arange(S0, S1), seed=3)
+check("3: observation has 26 numbers for eight assets",
+      env3.observation_space.shape == (26,) and env3.action_space.shape == (N + 1,))
+
+print("4. reward timing (allocator)")
+env4 = AllocatorEnv(AI, eval_start=500, eval_end=600, mu_q=np.zeros(N), cost_pct=0.0,
+                    alloc_lambda=0.0, reward_scale=1.0, turnover_pen=0.0)
+env4.reset()
+act4 = rng9.uniform(-1, 1, N + 1)
+_, r4a, *_ = env4.step(act4)
+d4 = np.arange(500, 500 + config.ALLOC_STEP)
+x4 = build_positions(INP.vol[d4], INP.cov[d4], m=m_syn[d4],
+                     beta=np.tile(budgets_from_action(act4[:N]), (len(d4), 1)),
+                     G=np.full(len(d4), gross_from_action(act4[N])))
+exp4a = float(((x4 - AI.x_fix[d4]) * INP.rex[d4 + 1]).sum())
+check("4: one step pays the H days' returns from d to d+1 (d = t .. t+H−1)",
+      abs(r4a - exp4a) < 1e-14)
+check("4: one step spans ALLOC_STEP days", env4.t == 500 + config.ALLOC_STEP)
+
+print("5. constant action earns nothing (allocator)")
+xf_nc = build_positions(INP.vol, INP.cov, m=m_syn, caps=False)
+q_nc = np.full_like(xf_nc, np.nan)
+q_nc[:-1] = xf_nc[:-1] * INP.rex[1:]
+days5 = np.arange(S0, S1 - 1)
+mu5 = q_nc[days5].mean(axis=0)
+act5 = np.concatenate([rng9.uniform(-1, 1, N), [0.6]])
+env5 = AllocatorEnv(AI, eval_start=S0, eval_end=S1 - 1, mu_q=mu5, cost_pct=0.0, caps=False,
+                    turnover_pen=0.0)
+env5.reset()
+act_all, done = [], False
+while not done:
+    _, _, _, done, info = env5.step(act5)
+    act_all.extend(info["active"])
+check(f"5: constant non-zero action: mean active over the fit window = 0 "
+      f"(|mean| {abs(np.mean(act_all)):.1e}, {len(act_all)} days)",
+      len(act_all) == len(days5) and abs(np.mean(act_all)) < 1e-10)
+
+env4b = AllocatorEnv(AI, eval_start=500, eval_end=600)
+env4b.reset()
+a1, a2 = rng9.uniform(-1, 1, N + 1), rng9.uniform(-1, 1, N + 1)
+o1, *_ = env4b.step(a1)
+_, _, _, _, i2 = env4b.step(a2)
+b1_, b2_ = budgets_from_action(a1[:N]), budgets_from_action(a2[:N])
+check("4: the turnover penalty is TURNOVER_PEN × sum|beta − previous beta|",
+      abs(i2["penalty"] - config.ALLOC_TURNOVER_PEN * np.abs(b2_ - b1_).sum()) < 1e-12)
+check("4: the observation shows the budgets and g in force",
+      np.allclose(o1[3 + 4 + N:3 + 4 + 2 * N], np.log(b1_ / base9) / config.ALLOC_KAPPA, atol=1e-6)
+      and abs(o1[3 + 4 + 2 * N] - a1[N]) < 1e-6)
+
+print("10. weekly hold")
+z10 = run_allocator(None, AI, 503, 640, policy=lambda o: rng9.uniform(-1, 1, N + 1))
+dec10 = np.flatnonzero(z10["decision"])
+same = all(np.array_equal(z10["beta"][i], z10["beta"][i - 1]) and z10["G"][i] == z10["G"][i - 1]
+           for i in range(1, len(z10["G"])) if not z10["decision"][i])
+moved = all(not np.array_equal(z10["beta"][i], z10["beta"][i - 1]) for i in dec10[1:])
+check("10: decisions fall every H trading days from the start",
+      np.array_equal(dec10, np.arange(0, 640 - 503, config.ALLOC_STEP)))
+check("10: beta and G change only on decision days", same and moved)
+
+print("12b. allocator training days")
+blocks12 = [(1, 320, 600), (2, 600, 700), (3, 700, 880)]
+td = train_days(320, 880, blocks12, holdout=2)
+check("12b: a held-out block and the ALLOC_PURGE_AFTER days after it are not trained on",
+      not np.any((td >= 600) & (td < 700 + config.ALLOC_PURGE_AFTER))
+      and td.min() == 320 and td.max() == 879)
+env12 = AllocatorEnv(AI, train_days=td, seed=0)
+L12 = config.ALLOC_EPISODE_BARS // config.ALLOC_STEP * config.ALLOC_STEP
+check("12b: no training episode crosses the held-out block",
+      len(env12.starts) > 0
+      and all(not np.any((np.arange(s_, s_ + L12) >= 600) & (np.arange(s_, s_ + L12) < 760))
+              for s_ in env12.starts))
 
 n_fail = sum(1 for _, ok in OK if not ok)
 print(f"\n{len(OK) - n_fail}/{len(OK)} checks passed")

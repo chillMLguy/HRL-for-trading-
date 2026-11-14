@@ -40,9 +40,15 @@ def sleeve_sizes(vol, sleeve_vol=None, b_max=None):
 
 
 def ex_ante_vol(x, cov):
-    """sqrt(x[t]' Cov[t] x[t]) for every row."""
+    """
+    sqrt(x[t]' Cov[t] x[t]) for every row.  Written with matmul, whose result for a
+    row does not depend on how many rows are passed (einsum's summation order does
+    for non-contiguous arrays), so a 5-day slice gives bit-identical numbers to the
+    full sample and neutral allocator actions reproduce the fixed portfolio exactly.
+    """
+    x = np.asarray(x, dtype=np.float64)
     with np.errstate(invalid="ignore"):
-        return np.sqrt(np.einsum("ti,tij,tj->t", x, cov, x))
+        return np.sqrt((x * (np.asarray(cov) @ x[..., None])[..., 0]).sum(axis=-1))
 
 
 def build_positions(vol, cov, m=None, beta=None, G=None, base=None, sleeve=None,
