@@ -1,0 +1,6 @@
+config,setting,value,spec_steps,spec_lambda,days,first,last,spec_active_sharpe,spec_timing_only_active_sharpe,spec_mean_tilt,trend_active_sharpe,trend_timing_only_active_sharpe,trend_mean_tilt,active_ci_lo,active_ci_hi
+default,-,,60000,10.0,1165,2010-05-17,2014-12-30,0.309,0.392,0.013,0.89,-0.148,0.39,-0.544,1.22
+lambda_5,SPEC_LAMBDA,5.0,60000,5.0,1165,2010-05-17,2014-12-30,0.078,0.211,-0.027,0.89,-0.148,0.39,-0.828,1.007
+lambda_20,SPEC_LAMBDA,20.0,60000,20.0,1165,2010-05-17,2014-12-30,0.142,0.267,-0.015,0.89,-0.148,0.39,-0.756,1.1
+steps_30k,SPEC_STEPS,30000.0,30000,10.0,1165,2010-05-17,2014-12-30,0.307,0.349,0.045,0.89,-0.148,0.39,-0.54,1.238
+steps_120k,SPEC_STEPS,120000.0,120000,10.0,1165,2010-05-17,2014-12-30,0.379,0.441,0.016,0.89,-0.148,0.39,-0.544,1.32

@@ -1,0 +1,326 @@
+{
+  "test_year": 2015,
+  "settings": {
+    "spec_steps": 60000,
+    "spec_lambda": 10.0,
+    "spec_choice": "default",
+    "spec_rule": "keep defaults unless a change beats them by more than 0.1 in cross-fitted active Sharpe (first fold only)",
+    "spec_configs_tried": [
+      "default",
+      "lambda_5",
+      "lambda_20",
+      "steps_30k",
+      "steps_120k"
+    ],
+    "chosen_on_test_year": 2015
+  },
+  "stream_root": "runs/multi_wf/fold2015",
+  "stream_days": [
+    "2010-05-17",
+    "2014-12-30",
+    1165
+  ],
+  "active_sharpe": [
+    {
+      "layer": "specialists",
+      "where": "cross-fit blocks",
+      "first": "2010-05-17",
+      "last": "2014-12-30",
+      "days": 1165,
+      "active_sharpe": 0.309,
+      "ci_lo": -0.544,
+      "ci_hi": 1.22,
+      "timing_only_active_sharpe": 0.392,
+      "mean_tilt": 0.013
+    },
+    {
+      "layer": "trend rule",
+      "where": "cross-fit blocks",
+      "first": "2010-05-17",
+      "last": "2014-12-30",
+      "days": 1165,
+      "active_sharpe": 0.89,
+      "ci_lo": -0.086,
+      "ci_hi": 1.912,
+      "timing_only_active_sharpe": -0.148,
+      "mean_tilt": 0.39
+    },
+    {
+      "layer": "specialists",
+      "where": "block 1",
+      "first": "2010-05-17",
+      "last": "2011-07-11",
+      "days": 291,
+      "active_sharpe": 1.449,
+      "ci_lo": 0.03,
+      "ci_hi": 2.98,
+      "timing_only_active_sharpe": 0.873,
+      "mean_tilt": 0.103
+    },
+    {
+      "layer": "trend rule",
+      "where": "block 1",
+      "first": "2010-05-17",
+      "last": "2011-07-11",
+      "days": 291,
+      "active_sharpe": 1.53,
+      "ci_lo": -0.091,
+      "ci_hi": 3.154,
+      "timing_only_active_sharpe": -1.818,
+      "mean_tilt": 0.739
+    },
+    {
+      "layer": "specialists",
+      "where": "block 2",
+      "first": "2011-07-12",
+      "last": "2012-09-04",
+      "days": 291,
+      "active_sharpe": 1.03,
+      "ci_lo": -0.644,
+      "ci_hi": 2.991,
+      "timing_only_active_sharpe": 1.077,
+      "mean_tilt": 0.007
+    },
+    {
+      "layer": "trend rule",
+      "where": "block 2",
+      "first": "2011-07-12",
+      "last": "2012-09-04",
+      "days": 291,
+      "active_sharpe": -0.292,
+      "ci_lo": -2.059,
+      "ci_hi": 1.325,
+      "timing_only_active_sharpe": -2.347,
+      "mean_tilt": 0.322
+    },
+    {
+      "layer": "specialists",
+      "where": "block 3",
+      "first": "2012-09-05",
+      "last": "2013-10-31",
+      "days": 291,
+      "active_sharpe": -0.563,
+      "ci_lo": -2.042,
+      "ci_hi": 1.08,
+      "timing_only_active_sharpe": 0.747,
+      "mean_tilt": 0.065
+    },
+    {
+      "layer": "trend rule",
+      "where": "block 3",
+      "first": "2012-09-05",
+      "last": "2013-10-31",
+      "days": 291,
+      "active_sharpe": 0.989,
+      "ci_lo": -0.92,
+      "ci_hi": 3.111,
+      "timing_only_active_sharpe": -1.453,
+      "mean_tilt": 0.323
+    },
+    {
+      "layer": "specialists",
+      "where": "block 4",
+      "first": "2013-11-01",
+      "last": "2014-12-30",
+      "days": 292,
+      "active_sharpe": -1.013,
+      "ci_lo": -2.335,
+      "ci_hi": 0.538,
+      "timing_only_active_sharpe": -0.197,
+      "mean_tilt": -0.124
+    },
+    {
+      "layer": "trend rule",
+      "where": "block 4",
+      "first": "2013-11-01",
+      "last": "2014-12-30",
+      "days": 292,
+      "active_sharpe": 1.512,
+      "ci_lo": -0.715,
+      "ci_hi": 3.877,
+      "timing_only_active_sharpe": -0.113,
+      "mean_tilt": 0.179
+    },
+    {
+      "layer": "specialists",
+      "where": "fit window fold 1 (in sample)",
+      "first": "2007-04-18",
+      "last": "2010-05-13",
+      "days": 775,
+      "active_sharpe": 8.673,
+      "ci_lo": 7.332,
+      "ci_hi": 10.496,
+      "timing_only_active_sharpe": 8.668,
+      "mean_tilt": 0.094
+    },
+    {
+      "layer": "specialists",
+      "where": "fit window fold 2 (in sample)",
+      "first": "2007-04-18",
+      "last": "2011-07-08",
+      "days": 1066,
+      "active_sharpe": 7.911,
+      "ci_lo": 6.708,
+      "ci_hi": 9.146,
+      "timing_only_active_sharpe": 8.02,
+      "mean_tilt": 0.017
+    },
+    {
+      "layer": "specialists",
+      "where": "fit window fold 3 (in sample)",
+      "first": "2007-04-18",
+      "last": "2012-08-31",
+      "days": 1357,
+      "active_sharpe": 6.718,
+      "ci_lo": 5.727,
+      "ci_hi": 7.717,
+      "timing_only_active_sharpe": 6.897,
+      "mean_tilt": -0.036
+    },
+    {
+      "layer": "specialists",
+      "where": "fit window fold 4 (in sample)",
+      "first": "2007-04-18",
+      "last": "2013-10-30",
+      "days": 1648,
+      "active_sharpe": 5.947,
+      "ci_lo": 5.232,
+      "ci_hi": 6.653,
+      "timing_only_active_sharpe": 6.01,
+      "mean_tilt": -0.042
+    },
+    {
+      "layer": "specialists",
+      "where": "fit window final (in sample)",
+      "first": "2007-04-18",
+      "last": "2014-12-30",
+      "days": 1941,
+      "active_sharpe": 5.988,
+      "ci_lo": 5.19,
+      "ci_hi": 6.74,
+      "timing_only_active_sharpe": 6.044,
+      "mean_tilt": 0.029
+    },
+    {
+      "layer": "trend rule",
+      "where": "fit window final",
+      "first": "2007-04-18",
+      "last": "2014-12-30",
+      "days": 1941,
+      "active_sharpe": 0.409,
+      "ci_lo": -0.219,
+      "ci_hi": 1.082,
+      "timing_only_active_sharpe": -0.044,
+      "mean_tilt": 0.337
+    }
+  ],
+  "diagnostics": [
+    {
+      "ticker": "SPY",
+      "mean_tilt": -0.192,
+      "mean_trend_tilt": 0.798,
+      "share_abs_gt_095_pct": 5.408,
+      "lag1_autocorr": 0.669,
+      "corr_with_trend_tilt": 0.063,
+      "mean_corr_between_seeds": 0.403,
+      "corr_fold_vs_final": 0.492
+    },
+    {
+      "ticker": "EFA",
+      "mean_tilt": -0.135,
+      "mean_trend_tilt": 0.447,
+      "share_abs_gt_095_pct": 9.442,
+      "lag1_autocorr": 0.583,
+      "corr_with_trend_tilt": -0.522,
+      "mean_corr_between_seeds": 0.469,
+      "corr_fold_vs_final": 0.616
+    },
+    {
+      "ticker": "EEM",
+      "mean_tilt": 0.018,
+      "mean_trend_tilt": 0.23,
+      "share_abs_gt_095_pct": 4.807,
+      "lag1_autocorr": 0.531,
+      "corr_with_trend_tilt": -0.143,
+      "mean_corr_between_seeds": 0.451,
+      "corr_fold_vs_final": 0.569
+    },
+    {
+      "ticker": "IEF",
+      "mean_tilt": 0.16,
+      "mean_trend_tilt": 0.552,
+      "share_abs_gt_095_pct": 6.352,
+      "lag1_autocorr": 0.662,
+      "corr_with_trend_tilt": -0.339,
+      "mean_corr_between_seeds": 0.464,
+      "corr_fold_vs_final": 0.495
+    },
+    {
+      "ticker": "TLT",
+      "mean_tilt": 0.046,
+      "mean_trend_tilt": 0.333,
+      "share_abs_gt_095_pct": 8.155,
+      "lag1_autocorr": 0.72,
+      "corr_with_trend_tilt": -0.421,
+      "mean_corr_between_seeds": 0.438,
+      "corr_fold_vs_final": 0.488
+    },
+    {
+      "ticker": "GLD",
+      "mean_tilt": 0.153,
+      "mean_trend_tilt": 0.11,
+      "share_abs_gt_095_pct": 5.494,
+      "lag1_autocorr": 0.728,
+      "corr_with_trend_tilt": -0.019,
+      "mean_corr_between_seeds": 0.405,
+      "corr_fold_vs_final": 0.325
+    },
+    {
+      "ticker": "DBC",
+      "mean_tilt": 0.118,
+      "mean_trend_tilt": -0.083,
+      "share_abs_gt_095_pct": 4.206,
+      "lag1_autocorr": 0.669,
+      "corr_with_trend_tilt": -0.228,
+      "mean_corr_between_seeds": 0.405,
+      "corr_fold_vs_final": 0.462
+    },
+    {
+      "ticker": "VNQ",
+      "mean_tilt": -0.065,
+      "mean_trend_tilt": 0.737,
+      "share_abs_gt_095_pct": 9.871,
+      "lag1_autocorr": 0.708,
+      "corr_with_trend_tilt": 0.159,
+      "mean_corr_between_seeds": 0.507,
+      "corr_fold_vs_final": 0.598
+    }
+  ],
+  "cap_days_pct_on_stream": {
+    "core_spec": {
+      "vol_cap": 10.82,
+      "lev_cap": 4.21
+    },
+    "core_trend": {
+      "vol_cap": 39.4,
+      "lev_cap": 24.12
+    }
+  },
+  "train_seconds_by_steps": [
+    {
+      "steps": 30000,
+      "count": 12,
+      "mean": 213.0
+    },
+    {
+      "steps": 60000,
+      "count": 41,
+      "mean": 422.0
+    },
+    {
+      "steps": 120000,
+      "count": 12,
+      "mean": 845.0
+    }
+  ]
+}

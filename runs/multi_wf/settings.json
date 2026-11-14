@@ -1,0 +1,14 @@
+{
+  "spec_steps": 60000,
+  "spec_lambda": 10.0,
+  "spec_choice": "default",
+  "spec_rule": "keep defaults unless a change beats them by more than 0.1 in cross-fitted active Sharpe (first fold only)",
+  "spec_configs_tried": [
+    "default",
+    "lambda_5",
+    "lambda_20",
+    "steps_30k",
+    "steps_120k"
+  ],
+  "chosen_on_test_year": 2015
+}

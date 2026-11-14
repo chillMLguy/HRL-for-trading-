@@ -9,8 +9,8 @@ not been run yet.
 
 | Milestone | State |
 |---|---|
-| M1: data and core, no training | Done, awaiting review (below) |
-| M2: specialists on the first fold | Not started |
+| M1: data and core, no training | Done, reviewed |
+| M2: specialists on the first fold | Done, awaiting review (below) |
 | M3: allocator on the first fold, one whole fold | Not started |
 | M4: walk-forward grid | Not started, runs only on request |
 
@@ -196,10 +196,120 @@ little: a correlation of 0.018 with the next 5 days' sleeve returns and 0.033 wi
 day's. That matches the single-asset finding in section 2 of the brief (about 0.05) and is
 the ceiling the specialists work under.
 
+## M2: the specialists on the first fold (test year 2015)
+
+```bash
+python search_multi.py --layer 1          # default stream + 4 variants, freezes settings.json
+python train_specialists.py --outdir runs/multi_wf/fold2015 --test_year 2015
+python report_spec_multi.py               # writes runs/multi_wf/fold2015/m2/
+```
+
+Training window of 2015: decisions 2007-04-18 to 2014-12-30 (1,941). Cross-fit blocks
+(out of sample): 2010-05-17 to 2014-12-30, 1,165 days in four blocks of about 291 days. Each
+block's three specialists were fitted only on data before it. Nothing here touches 2015.
+
+**Reward scale check.** Under uniformly random tilts on the fit window, the reward has a
+standard deviation of 0.38 (0.38–0.39 for λ = 5, 10, 20), inside the brief's 0.1–3. So
+`SPEC_REWARD_SCALE` stays at 100.
+
+### Active Sharpe against the core (`m2/active_sharpe.csv`)
+
+Net excess returns after costs. "Timing only" holds each asset's average tilt constant and
+measures what is left. It uses the period's own average tilt (hindsight), is a diagnostic
+only, and never enters a decision.
+
+| Layer | Where | Days | Active Sharpe | 95% interval | Timing only | Mean tilt |
+|---|---|---|---|---|---|---|
+| Specialists | cross-fit blocks (out of sample) | 1,165 | **0.31** | [−0.54, 1.22] | 0.39 | 0.01 |
+| Trend rule | same days | 1,165 | 0.89 | [−0.09, 1.91] | −0.15 | 0.39 |
+| Specialists | block 1 (2010-05 to 2011-07) | 291 | 1.45 | [0.03, 2.98] | 0.87 | 0.10 |
+| Specialists | block 2 (2011-07 to 2012-09) | 291 | 1.03 | [−0.64, 2.99] | 1.08 | 0.01 |
+| Specialists | block 3 (2012-09 to 2013-10) | 291 | −0.56 | [−2.04, 1.08] | 0.75 | 0.07 |
+| Specialists | block 4 (2013-11 to 2014-12) | 292 | −1.01 | [−2.34, 0.54] | −0.20 | −0.12 |
+| Specialists | fit window, fold 1 (in sample) | 775 | 8.67 | [7.33, 10.50] | 8.67 | 0.09 |
+| Specialists | fit window, fold 2 (in sample) | 1,066 | 7.91 | [6.71, 9.15] | 8.02 | 0.02 |
+| Specialists | fit window, fold 3 (in sample) | 1,357 | 6.72 | [5.73, 7.72] | 6.90 | −0.04 |
+| Specialists | fit window, fold 4 (in sample) | 1,648 | 5.95 | [5.23, 6.65] | 6.01 | −0.04 |
+| Specialists | fit window, final ensemble (in sample) | 1,941 | 5.99 | [5.19, 6.74] | 6.04 | 0.03 |
+| Trend rule | same window | 1,941 | 0.41 | [−0.22, 1.08] | −0.04 | 0.34 |
+
+Costs on the cross-fit blocks: `core_spec` turns over 123 times capital a year against 10.7
+for the core, and pays 2.46% a year in costs against 0.21%. **Before costs** the specialists'
+active Sharpe is 0.75 [−0.13, 1.69] (active return 3.8% a year at 5.1% tracking error);
+after costs it is 0.31.
+
+### Specialist diagnostics on the cross-fit blocks (`m2/spec_diagnostics.csv`)
+
+| Asset | Mean tilt | Mean trend tilt | Days with abs(tilt) > 0.95 % | Lag-1 autocorr | Corr with trend tilt | Mean corr between seeds | Corr fold vs final |
+|---|---|---|---|---|---|---|---|
+| SPY | −0.19 | 0.80 | 5.4 | 0.67 | 0.06 | 0.40 | 0.49 |
+| EFA | −0.14 | 0.45 | 9.4 | 0.58 | −0.52 | 0.47 | 0.62 |
+| EEM | 0.02 | 0.23 | 4.8 | 0.53 | −0.14 | 0.45 | 0.57 |
+| IEF | 0.16 | 0.55 | 6.4 | 0.66 | −0.34 | 0.46 | 0.50 |
+| TLT | 0.05 | 0.33 | 8.2 | 0.72 | −0.42 | 0.44 | 0.49 |
+| GLD | 0.15 | 0.11 | 5.5 | 0.73 | −0.02 | 0.41 | 0.33 |
+| DBC | 0.12 | −0.08 | 4.2 | 0.67 | −0.23 | 0.41 | 0.46 |
+| VNQ | −0.07 | 0.74 | 9.9 | 0.71 | 0.16 | 0.51 | 0.60 |
+
+"Corr fold vs final" compares the stream's tilts with the final ensemble's on the same days,
+which the final ensemble was trained on; the test-year version comes with M3. The caps bind
+for `core_spec` on 10.8% (volatility) and 4.2% (leverage) of the block days, against 39.4% and
+24.1% for `core_trend`.
+
+Training curve, mean over seeds (`m2/training_curves.csv`): the fit-window active Sharpe
+rises steadily through training, without levelling off: 2.0 / 4.2 / 5.2 / 6.4 at 6k / 18k /
+30k / 60k steps for the fold models, and 1.2 / 2.4 / 3.3 / 4.6 per single final seed.
+
+**Training time:** 7.0 minutes per 60,000-step model (422 s on average over 41 runs, two
+running in parallel on a 2-core machine), 3.6 minutes per 30,000 and 14.1 minutes per 120,000.
+
+### Findings
+
+**1. No evidence that the specialists time the assets.** Out of sample the active Sharpe is
+0.31 with an interval of [−0.54, 1.22]. Their average tilt is close to zero (0.01) as the
+reward intends, so this number is timing, not exposure. By block it falls from 1.45 and 1.03
+in 2010–12 to −0.56 and −1.01 in 2012–14. Each block's interval is about ±1.5 wide, so that
+decline is not reliable either.
+
+**2. They memorise their training data, as the old agents did.** The active Sharpe on their
+own fit windows is 5.9 to 8.7, against 0.31 out of sample. It shrinks as the fit window grows
+(8.7 on 775 days, 5.9 on 1,648), and it keeps rising with training steps. Sharing one network
+across assets, averaging seeds, and making every input dimensionless did not prevent it. The
+features carry very little to learn: the pre-registered check found a correlation of 0.018
+between features 0–11 and the next 5 days' sleeve returns.
+
+**3. Trading costs eat more than half of what there is.** The tilt changes by 0.33 a day on
+average (lag-1 autocorrelation 0.53–0.73), so `core_spec` trades about 12 times as much as the
+core. The reward does charge for the extra trading, but 2 bp per unit is small next to the
+noise in the active return.
+
+**4. The policies are unstable.** Seeds trained on the same data correlate 0.40–0.51, and fold
+tilts against final tilts 0.33–0.62. That is barely better than the old system's 0.33.
+
+**5. The trend rule is not a timing benchmark on these days either.** Its active Sharpe of
+0.89 on the blocks becomes −0.15 once its average tilt (+0.39) is held constant. It comes from
+holding more risk, as in M1. Pre-registered comparison 2 (`core_spec` against `core_trend`) is
+therefore partly a comparison of timing with exposure. I will report the timing-only
+diagnostic next to it, without changing the comparison.
+
 ## Settings search (brief section 8)
 
-No configuration tried yet. Every configuration and its cross-fitted score will be listed
-here, because the number tried enters the Deflated Sharpe.
+Layer 1, first fold only, scored by the cross-fitted active Sharpe of `core_spec` against
+`core` on the blocks above (`runs/multi_wf/fold2015/search_layer1.csv`):
+
+| Configuration | Steps | λ | Active Sharpe | 95% interval | Timing only | Mean tilt |
+|---|---|---|---|---|---|---|
+| default | 60,000 | 10 | 0.309 | [−0.544, 1.220] | 0.392 | 0.013 |
+| lambda_5 | 60,000 | 5 | 0.078 | [−0.828, 1.007] | 0.211 | −0.027 |
+| lambda_20 | 60,000 | 20 | 0.142 | [−0.756, 1.100] | 0.267 | −0.015 |
+| steps_30k | 30,000 | 10 | 0.307 | [−0.540, 1.238] | 0.349 | 0.045 |
+| steps_120k | 120,000 | 10 | 0.379 | [−0.544, 1.320] | 0.441 | 0.016 |
+
+The best change (120,000 steps) beats the defaults by 0.07, under the 0.1 margin, so **the
+defaults are kept** and frozen in `runs/multi_wf/settings.json` for every fold. Every interval
+spans about −0.8 to +1.3: the differences between configurations are noise. Configurations
+tried so far: 5 for layer 1, plus the feature check, which ran no configuration. Layer 2
+follows in M3.
 
 ## Deviations from the brief and interpretations
 
@@ -214,3 +324,8 @@ here, because the number tried enters the Deflated Sharpe.
 | 7 | `download_multi.py` | The download is one `yf.download(..., period="max", auto_adjust=True)` call for the eight ETFs and `^IRX` together, saved unchanged as `data/multi_raw.csv` and then split into `multi_prices.csv` and `riskfree.csv`. Per-ticker requests with a start date were throttled by Yahoo on the owner's machine; the single call was not. The brief's start date (2005-01-01) now only bounds what the loaders read. |
 | 8 | `download_multi.py` | `data/multi_ohlcv.csv` (open, high, low, close, volume) is cached from the same download. No model reads it. It is kept for a possible test of range and volume features, which is not decided and would itself be a deviation (section 8 does not list feature changes among the allowed settings). |
 | 9 | `report_core_multi.py` | `core_diagnostics.json` adds a hindsight check (each asset's average trend tilt held constant) to separate timing from average exposure in `core_trend`. It uses future data, is labelled as a diagnostic, and never enters a comparison. |
+| 10 | new scripts | `feature_check_multi.py` (pre-registered feature check), `search_multi.py` (settings search, which writes `settings.json`) and `report_spec_multi.py` (M2 report) are not in the brief's file table. They implement steps the brief asks for (sections 8 and 12) and reuse `multi/` and `train_crossfit_multi.py`. |
+| 11 | `multi/spec_env.py` | Mode `separate` raises a clear error. The brief marks it as an ablation run only on request; it will be built when requested. |
+| 12 | `multi/data.py`, `train_crossfit_multi.py` | Fit windows end strictly before what they are evaluated on: a fold's last training reward uses the return realised at the bar before its block starts. The stream and the final fit stop at the last decision whose return is realised inside the training window, so the stream ends on 2014-12-30, not 2014-12-31. |
+| 13 | `search_multi.py`, `report_spec_multi.py` | A timing-only active Sharpe (average tilt held constant, hindsight) is reported next to the brief's active Sharpe. It never enters a decision; the search uses the brief's criterion. |
+| 14 | `report_spec_multi.py` | The correlation of fold and final specialists is computed on the cross-fit blocks in M2 (where the final ensemble is in sample). The brief's test-year version (section 8) comes with the M3 evaluation. |

@@ -1,0 +1,17 @@
+{
+  "fold": 2,
+  "fit_lo": 300,
+  "fit_hi": 1367,
+  "fit_first_decision": "2007-04-18",
+  "fit_last_data_bar": "2011-07-11",
+  "block_first": "2011-07-12",
+  "block_last": "2012-09-04",
+  "seeds": [
+    2015020,
+    2015021,
+    2015022
+  ],
+  "steps": 120000,
+  "mode": "shared_id",
+  "spec_lambda": 10.0
+}
