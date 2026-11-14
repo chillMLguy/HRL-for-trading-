@@ -17,8 +17,9 @@ Writes
 Every multi-asset script reads these files and never calls yfinance, so all folds,
 seeds and reruns see byte-identical data (same reason as download_data.py).
 
-Each ticker is fetched on its own with retries, because parallel requests fail
-together on a flaky connection.  The script stops with an error if any ticker or
+All tickers are fetched in one call first; any that come back empty (yfinance then
+says "possibly delisted", usually because Yahoo throttled the request) are retried
+one at a time with a growing pause.  The script stops with an error if any ticker or
 ^IRX comes back empty.  A missing risk-free rate must never be replaced by zero:
 every reported number is an excess return over it.
 """
@@ -26,11 +27,16 @@ import argparse
 import os
 import sys
 import time
+import warnings
 
 import pandas as pd
 import yfinance as yf
 
 import config
+
+# yfinance calls pandas with arguments pandas 3.1 deprecates; harmless, but it
+# buries the progress lines
+warnings.filterwarnings("ignore", message="The inplace keyword")
 
 FIELDS = ["Open", "High", "Low", "Close", "Volume"]
 
@@ -41,7 +47,10 @@ def _bars(df, ticker):
         return None
     if isinstance(df.columns, pd.MultiIndex):            # (Price, Ticker)
         lvl = df.columns.get_level_values(-1)
-        df = df.loc[:, lvl == ticker] if ticker in set(lvl) else df
+        if ticker in set(lvl):
+            df = df.loc[:, lvl == ticker]
+        elif len(set(lvl)) != 1:                          # ticker absent from a batch
+            return None
         df = df.droplevel(-1, axis=1)
     if "Close" not in df.columns:
         return None
@@ -52,30 +61,46 @@ def _bars(df, ticker):
     return out.sort_index() if len(out) else None
 
 
-def _download_one(ticker, start, end, retries, wait, timeout):
-    """One ticker, retried.  Returns its OHLCV frame or None."""
-    for attempt in range(1, retries + 1):
-        try:
-            df = yf.download(ticker, start=start, end=end, interval="1d",
-                             auto_adjust=True, progress=False, threads=False,
-                             timeout=timeout)
-        except Exception as e:                       # network errors, bad responses
-            print(f"  {ticker}: {type(e).__name__}: {e}")
-            df = None
-        bars = _bars(df, ticker)
-        if bars is not None:
-            print(f"  {ticker}: {len(bars)} bars")
-            return bars
-        if attempt < retries:
-            print(f"  {ticker}: attempt {attempt}/{retries} failed, retrying in {wait}s")
-            time.sleep(wait)
-    print(f"  {ticker}: FAILED after {retries} attempts")
-    return None
+def _fetch(tickers, timeout):
+    """One yfinance call for the full daily history of `tickers` (None on error)."""
+    try:
+        return yf.download(tickers, period="max", interval="1d", auto_adjust=True,
+                           progress=False, group_by="column", timeout=timeout)
+    except Exception as e:                           # network errors, bad responses
+        print(f"  {type(e).__name__}: {e}")
+        return None
 
 
-def _download(tickers, start, end, retries=3, wait=5, timeout=30):
-    """{ticker: OHLCV frame or None}."""
-    return {t: _download_one(t, start, end, retries, wait, timeout) for t in tickers}
+def _trim(bars, start, end):
+    if bars is None:
+        return None
+    keep = bars.index >= pd.Timestamp(start)
+    if end:
+        keep &= bars.index < pd.Timestamp(end)
+    bars = bars[keep]
+    return bars if len(bars) else None
+
+
+def _download(tickers, start, end, retries=4, wait=15, timeout=30):
+    """
+    {ticker: OHLCV frame or None}.  One batch call for all tickers first (the call
+    that works most reliably against Yahoo), then each missing ticker on its own,
+    with a growing pause between attempts.
+    """
+    df = _fetch(list(tickers), timeout)
+    out = {t: _trim(_bars(df, t), start, end) for t in tickers}
+    for t in tickers:
+        for attempt in range(1, retries + 1):
+            if out[t] is not None:
+                break
+            pause = wait * attempt
+            print(f"  {t}: empty reply, retry {attempt}/{retries} in {pause:.0f}s")
+            time.sleep(pause)
+            out[t] = _trim(_bars(_fetch(t, timeout), t), start, end)
+    for t in tickers:
+        print(f"  {t}: " + (f"{len(out[t])} bars" if out[t] is not None
+                            else f"FAILED after {retries} retries"))
+    return out
 
 
 def main():
@@ -85,8 +110,10 @@ def main():
     p.add_argument("--prices_out", default=config.MULTI_DATA_CSV)
     p.add_argument("--ohlcv_out", default=config.MULTI_OHLCV_CSV)
     p.add_argument("--riskfree_out", default=config.RISKFREE_CSV)
-    p.add_argument("--retries", type=int, default=3, help="attempts per ticker")
-    p.add_argument("--wait", type=float, default=5, help="seconds between attempts")
+    p.add_argument("--retries", type=int, default=4,
+                   help="retries per ticker missing from the batch call")
+    p.add_argument("--wait", type=float, default=15,
+                   help="pause before retry k is k × wait seconds")
     p.add_argument("--timeout", type=float, default=30, help="seconds per request")
     args = p.parse_args()
     net = dict(retries=args.retries, wait=args.wait, timeout=args.timeout)
