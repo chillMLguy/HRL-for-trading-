@@ -185,7 +185,7 @@ its rules are in `RESULTS_MULTI.md` and in the implementation brief.
 Status: milestone M1 (data, the core and the rule-based baselines; no learning).
 
 ```bash
-python download_multi.py                          # once: data/multi_prices.csv, data/riskfree.csv
+python download_multi.py                          # once: data/multi_prices.csv, multi_ohlcv.csv, riskfree.csv
 python tests/test_multi.py                        # mechanical tests, synthetic data, seconds
 python report_core_multi.py --outdir runs/multi_core
 ```
