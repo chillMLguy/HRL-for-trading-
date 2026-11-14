@@ -12,12 +12,23 @@ Milestone M1 (data and core):
    7  caps                    one common scale factor, cap holds exactly
    8  volatility target       realised vol of the core within 15% of PORT_VOL
   13  benchmarks              SPY at weight 1, equal capital weights, 60/40, spy_vt
-plus sanity checks on the features.  Tests 3 (environments), 4, 5, 9-12 arrive with
-the specialist and allocator environments (milestones M2 and M3).
+plus sanity checks on the features.
+
+Milestone M2 (specialists):
+   3  neutral identity        SpecialistEnv with action 0 earns reward 0
+   4  reward timing           step t pays the return from t to t+1, inside the fit window
+   5  constant action         a constant tilt earns nothing on average over the fit window
+  11  ensemble                one model = its action, several = their mean, reproducible
+  12  cross-fit dates         every stream row comes from models fitted before its block
+Tests 3 (allocator), 4 and 5 (allocator), 9 and 10 arrive with the allocator (M3).
 """
+import json
 import os
 import sys
 import tempfile
+import warnings
+
+warnings.filterwarnings("ignore")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -333,6 +344,135 @@ check("13: scaled baselines hit PORT_VOL ex ante when no cap binds",
       all(np.abs(i["ex_ante_vol"][W:][~(i["vol_bind"] | i["lev_bind"])[W:]]
                  - config.PORT_VOL).max() < 1e-12
           for k, (_, i) in pos.items() if k in ("core", "equal_weight", "sixty_forty")))
+
+# ── Milestone M2: specialists ───────────────────────────────────────────────
+from multi.spec_env import SpecialistEnv, specialist_tilts, sleeve_returns
+from multi.data import training_window
+
+print("3. neutral identity (specialist environment)")
+FIT_LO, FIT_HI = 320, 700
+env = SpecialistEnv(INP, FIT_LO, FIT_HI, seed=0)
+all_zero = True
+for ep in range(3):
+    env.reset()
+    done = False
+    while not done:
+        _, r, _, done, info = env.step(np.array([0.0]))
+        all_zero &= (r == 0.0) and (info["active"] == 0.0)
+check("3: SpecialistEnv with action 0 returns reward 0 at every step (costs on)", all_zero)
+
+print("4. reward timing (specialist)")
+envt = SpecialistEnv(INP, FIT_LO, FIT_HI, cost_pct=0.0, spec_lambda=0.0, reward_scale=1.0,
+                     eval_asset=2, eval_start=400, eval_end=410)
+envt.reset()
+_, r4, *_ = envt.step(np.array([0.7]))
+b4 = sleeve_sizes(INP.vol)
+exp4 = 0.7 * (b4[400, 2] * INP.rex[401, 2] - envt.mu_s[2])
+check("4: the reward of step t pays the tilt times the sleeve return from t to t+1",
+      abs(r4 - exp4) < 1e-15)
+starts, lengths, last_ok = [], [], True
+for ep in range(20):
+    env.reset()
+    starts.append(env.t)
+    n, done = 0, False
+    while not done:
+        _, _, _, done, info = env.step(np.array([0.3]))
+        n += 1
+        last_ok &= info["t"] + 1 <= FIT_HI - 1
+    lengths.append(n)
+check("4: training episodes are 252 decisions inside the fit window",
+      all(L == config.SPEC_EPISODE_BARS for L in lengths)
+      and min(starts) >= FIT_LO and max(starts) <= FIT_HI - 1 - config.SPEC_EPISODE_BARS)
+check("4: no reward uses a return at or after the end of the fit window", last_ok)
+
+print("5. constant action earns nothing (specialist)")
+means = []
+for i in range(N):
+    e5 = SpecialistEnv(INP, FIT_LO, FIT_HI, cost_pct=0.0, eval_asset=i,
+                       eval_start=FIT_LO, eval_end=FIT_HI - 1)
+    e5.reset()
+    act, done = [], False
+    while not done:
+        _, _, _, done, info = e5.step(np.array([0.5]))
+        act.append(info["active"])
+    means.append(np.mean(act))
+check(f"5: constant tilt +0.5: mean active over the fit window = 0 (max {max(map(abs, means)):.1e})",
+      max(map(abs, means)) < 1e-10)
+
+print("11. ensemble")
+
+
+class Stub:
+    """predict() like SB3: a fixed linear map of the observation."""
+    def __init__(self, w):
+        self.w = w
+
+    def predict(self, obs, deterministic=True):
+        return np.tanh(obs @ self.w)[:, None], None
+
+
+rng11 = np.random.default_rng(11)
+dim = INP.feats.shape[2] + 1 + N
+stubs = [Stub(rng11.normal(0, 0.3, dim)) for _ in range(3)]
+t1 = specialist_tilts(stubs[:1], INP, 500, 530)
+manual, prev = [], np.zeros(N)
+for t in range(500 - config.SPEC_INFER_LEADIN, 530):
+    obs = np.concatenate([INP.feats[t], prev[:, None], np.eye(N)], axis=1).astype(np.float32)
+    a = np.tanh(obs @ stubs[0].w)
+    if t >= 500:
+        manual.append(a)
+    prev = a
+check("11: one model: the tilt is its deterministic action, fed back as feature 12",
+      max_abs_diff(t1, np.array(manual)) < 1e-6)
+t3 = specialist_tilts(stubs, INP, 500, 530)
+manual, prev = [], np.zeros(N)
+for t in range(500 - config.SPEC_INFER_LEADIN, 530):
+    obs = np.concatenate([INP.feats[t], prev[:, None], np.eye(N)], axis=1).astype(np.float32)
+    a = np.mean([np.tanh(obs @ s_.w) for s_ in stubs], axis=0)
+    if t >= 500:
+        manual.append(a)
+    prev = a
+check("11: several models: the tilt is their mean, and the mean is fed back",
+      max_abs_diff(t3, np.array(manual)) < 1e-6)
+check("11: inference twice gives identical output",
+      np.array_equal(t3, specialist_tilts(stubs, INP, 500, 530)))
+from stable_baselines3 import SAC
+sac = SAC("MlpPolicy", SpecialistEnv(INP, FIT_LO, FIT_HI), seed=0, device="cpu",
+          learning_starts=10_000)
+obs0 = np.concatenate([INP.feats[600], np.zeros((N, 1)), np.eye(N)], axis=1).astype(np.float32)
+ts = specialist_tilts([sac], INP, 600, 601, leadin=0)
+check("11: works with a real SAC model (deterministic action)",
+      max_abs_diff(ts[0], sac.predict(obs0, deterministic=True)[0][:, 0]) < 1e-6)
+
+print("12. cross-fit dates")
+from train_crossfit_multi import build_stream, stream_scores
+P12 = synthetic_prices(1500, seed=12)
+inp12 = compute_inputs(universe_from_frames(P12, synthetic_irx(P12.index, seed=13)))
+run12 = os.path.join(tmp, "cf12")
+stream = build_stream(inp12, 2015, run12, folds=2, seeds=1, steps=300, workers=1)
+lo12, hi12 = training_window(inp12.dates, 2015, W)
+ok12 = True
+for j in sorted(stream["fold"].unique()):
+    rows = stream[stream["fold"] == j]
+    with open(os.path.join(run12, "crossfit", f"fold{j}", "block.json")) as f:
+        blk = json.load(f)
+    with open(os.path.join(run12, "crossfit", f"fold{j}", "specialists", "seed0",
+                           "config.json")) as f:
+        sc = json.load(f)
+    fit_end = pd.Timestamp(sc["fit_last_data_bar"])
+    ok12 &= fit_end < rows["date"].min() and fit_end == pd.Timestamp(blk["fit_last_data_bar"])
+check("12: every row comes from models whose fit window ended before its block", ok12)
+check("12: blocks are consecutive and the stream ends where returns leave the window",
+      inp12.dates[inp12.dates.get_loc(stream["date"].iloc[0]):hi12 - 1].equals(
+          pd.DatetimeIndex(stream["date"])))
+check("12: the stream has a_<ticker> and hmm_<k> columns",
+      all(f"a_{t}" in stream for t in TICKERS)
+      and all(f"hmm_{k}" in stream for k in range(config.N_STATES))
+      and np.allclose(stream[[f"hmm_{k}" for k in range(config.N_STATES)]].sum(axis=1), 1))
+sc12, _ = stream_scores(stream, inp12)
+check("12: rerunning reuses every finished fold (resumable)",
+      build_stream(inp12, 2015, run12, folds=2, seeds=1, steps=300, workers=1)
+      .equals(stream) and np.isfinite(sc12["spec_active_sharpe"]))
 
 n_fail = sum(1 for _, ok in OK if not ok)
 print(f"\n{len(OK) - n_fail}/{len(OK)} checks passed")

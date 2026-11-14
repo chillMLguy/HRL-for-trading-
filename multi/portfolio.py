@@ -201,3 +201,20 @@ def portfolio_metrics(res, info=None, start=None, end=None, ann=None):
     else:
         row["vol_cap_days_pct"] = row["lev_cap_days_pct"] = float("nan")
     return row
+
+
+def tilt_returns(inputs, tilts, start, end, cost_pct=None):
+    """
+    net_returns of the core with specialist tilts on decisions start .. end − 1
+    (fixed budgets, G = 1): the `core_spec` construction of section 5.
+    """
+    T, N = inputs.vol.shape
+    m = np.ones((T, N))
+    m[start:end] = 1.0 + np.asarray(tilts, dtype=np.float64)
+    x = build_positions(inputs.vol, inputs.cov, m=m)
+    return net_returns(x, inputs.rex, start, end, cost_pct)
+
+
+def active_sharpe(r_a, r_b, ann=None):
+    """sqrt(252) · mean(d) / std(d) with d = r_a − r_b (brief section 8)."""
+    return ann_sharpe(np.asarray(r_a) - np.asarray(r_b), ann or config.MULTI_BARS_PER_YEAR)
