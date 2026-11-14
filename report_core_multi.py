@@ -27,6 +27,8 @@ Outputs in --outdir
   core_sleeves.csv        per asset: mean vol, share of days at the vol floor and at
                           B_MAX, mean and max position in the core
   core_positions.csv      the core's daily positions
+  core_diagnostics.json   core_trend against core (the room the specialists have),
+                          the trend tilt's average, and when the core's caps bind
   config.json             every setting and a hash of both data files
 
 The core's parameters are fixed by the brief: this report describes how the core
@@ -41,11 +43,11 @@ import numpy as np
 import pandas as pd
 
 import config
-from common.stats import ann_sharpe
+from common.stats import ann_sharpe, bootstrap_sharpe_ci, bootstrap_sharpe_diff_pvalue
 from multi.data import first_common_date, load_universe
 from multi.features import compute_inputs, trend_rule_tilt
-from multi.portfolio import (RULE_BASED, net_returns, portfolio_metrics,
-                             rule_based_positions)
+from multi.portfolio import (RULE_BASED, build_positions, net_returns,
+                             portfolio_metrics, rule_based_positions)
 
 
 def _sha256(path):
@@ -63,6 +65,36 @@ def training_window_years(first_decision):
         lo = max(pd.Timestamp(f"{y - config.MULTI_WF_TRAIN_YEARS}-01-01"), first_decision)
         out[y] = (pd.Timestamp(f"{y}-01-01") - lo).days / 365.25
     return out
+
+
+def trend_diagnostics(inp, ret, trend_tilt, start, stop):
+    """
+    How much of core_trend's edge over core is timing.  The hindsight check holds
+    each asset's full-sample average trend tilt constant: it uses future data and
+    is a diagnostic only, never a portfolio.
+    """
+    a, b = ret["core_trend"].values, ret["core"].values
+    d = a - b
+    lo, hi = bootstrap_sharpe_ci(d)
+    diff, p = bootstrap_sharpe_diff_pvalue(a, b)
+    tilt = trend_tilt[start:stop]
+    mean_tilt = tilt.mean(axis=0)
+    m_const = 1.0 + np.tile(mean_tilt, (len(trend_tilt), 1))
+    rc = net_returns(build_positions(inp.vol, inp.cov, m=m_const), inp.rex,
+                     start, stop)["r"]
+    return {
+        "sharpe_diff": round(diff, 3), "sharpe_diff_pvalue": round(p, 3),
+        "active_sharpe": round(ann_sharpe(d), 3),
+        "active_sharpe_ci": [round(lo, 3), round(hi, 3)],
+        "mean_tilt": round(float(tilt.mean()), 3),
+        "mean_tilt_per_asset": {t: round(float(v), 3)
+                                for t, v in zip(inp.tickers, mean_tilt)},
+        "days_avg_tilt_positive_pct": round(float((tilt.mean(axis=1) > 0).mean() * 100), 1),
+        "hindsight_constant_tilt": {
+            "sharpe": round(ann_sharpe(rc), 3),
+            "active_sharpe_of_core_trend": round(ann_sharpe(a - rc), 3),
+        },
+    }
 
 
 def multi_config():
@@ -112,7 +144,8 @@ def main():
     print(f"First feasible test year (≥ {config.MULTI_MIN_TRAIN_YEARS} years): "
           f"{ok[0] if ok else 'none'}")
 
-    positions = rule_based_positions(inp, trend_rule_tilt(inp))
+    trend_tilt = trend_rule_tilt(inp)
+    positions = rule_based_positions(inp, trend_tilt)
     returns, rows = {}, []
     for name in RULE_BASED:
         x, info = positions[name]
@@ -144,6 +177,20 @@ def main():
         "core_k_min": round(float(info["k"][sl].min()), 3),
         "core_k_max": round(float(info["k"][sl].max()), 3),
     }
+
+    diag = trend_diagnostics(inp, ret, trend_tilt, start, stop)
+    lev = pd.Series(info["lev_bind"][sl], index=u.dates[sl])
+    vcap = pd.Series(info["vol_bind"][sl], index=u.dates[sl])
+    diag["core_lev_cap_days_by_year"] = {
+        str(y): int(n) for y, n in lev.groupby(lev.index.year).sum().items() if n}
+    diag["core_vol_cap_days_by_year"] = {
+        str(y): int(n) for y, n in vcap.groupby(vcap.index.year).sum().items() if n}
+    diag["core_realised_vol_pct"] = round(float(ret["core"].std()
+                                                * np.sqrt(config.MULTI_BARS_PER_YEAR) * 100), 2)
+    diag["core_realised_vol_by_year_pct"] = {str(y): float(v)
+                                             for y, v in yearly_vol["core"].items()}
+    with open(os.path.join(args.outdir, "core_diagnostics.json"), "w") as f:
+        json.dump(diag, f, indent=2)
 
     ret.to_csv(os.path.join(args.outdir, "core_returns.csv"))
     metrics.to_csv(os.path.join(args.outdir, "core_metrics.csv"), index=False)
@@ -177,6 +224,16 @@ def main():
     print(sleeves.to_string())
     print(f"\nCore scale k: mean {core_extra['core_k_mean']}, "
           f"min {core_extra['core_k_min']}, max {core_extra['core_k_max']}")
+    print(f"\ncore_trend vs core: Sharpe difference {diag['sharpe_diff']:+.3f} "
+          f"(p = {diag['sharpe_diff_pvalue']:.3f}), active Sharpe "
+          f"{diag['active_sharpe']:.3f} [{diag['active_sharpe_ci'][0]:.3f}, "
+          f"{diag['active_sharpe_ci'][1]:.3f}]")
+    print(f"Trend tilt: mean {diag['mean_tilt']:.2f}, average tilt > 0 on "
+          f"{diag['days_avg_tilt_positive_pct']:.0f}% of days")
+    print(f"Hindsight check: core with each asset's average trend tilt held constant "
+          f"has Sharpe {diag['hindsight_constant_tilt']['sharpe']:.3f}; core_trend's "
+          f"active Sharpe against it is "
+          f"{diag['hindsight_constant_tilt']['active_sharpe_of_core_trend']:.3f}")
     print("\nSharpe per year\n")
     print(yearly_sharpe.to_string())
     print(f"\nSaved → {args.outdir}")

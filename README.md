@@ -182,7 +182,8 @@ it, and a weekly allocator that shifts risk between assets. Everything is measur
 daily net excess returns over the T-bill rate (`^IRX`), after a 2 bp cost. The design and
 its rules are in `RESULTS_MULTI.md` and in the implementation brief.
 
-Status: milestone M1 (data, the core and the rule-based baselines; no learning).
+Status: milestone M1 done (data, the core and the rule-based baselines; no learning).
+Results and the review are in `RESULTS_MULTI.md`.
 
 ```bash
 python download_multi.py                          # once: one yfinance call → data/multi_*.csv, riskfree.csv

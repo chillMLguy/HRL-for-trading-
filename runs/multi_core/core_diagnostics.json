@@ -1,0 +1,54 @@
+{
+  "sharpe_diff": 0.029,
+  "sharpe_diff_pvalue": 0.413,
+  "active_sharpe": 0.279,
+  "active_sharpe_ci": [
+    -0.141,
+    0.732
+  ],
+  "mean_tilt": 0.286,
+  "mean_tilt_per_asset": {
+    "SPY": 0.568,
+    "EFA": 0.313,
+    "EEM": 0.217,
+    "IEF": 0.341,
+    "TLT": 0.163,
+    "GLD": 0.325,
+    "DBC": 0.02,
+    "VNQ": 0.342
+  },
+  "days_avg_tilt_positive_pct": 77.3,
+  "hindsight_constant_tilt": {
+    "sharpe": 0.563,
+    "active_sharpe_of_core_trend": -0.003
+  },
+  "core_lev_cap_days_by_year": {
+    "2014": 39,
+    "2017": 52,
+    "2018": 14,
+    "2020": 16
+  },
+  "core_vol_cap_days_by_year": {},
+  "core_realised_vol_pct": 10.42,
+  "core_realised_vol_by_year_pct": {
+    "2007": 10.81,
+    "2008": 11.96,
+    "2009": 8.84,
+    "2010": 10.0,
+    "2011": 10.69,
+    "2012": 8.99,
+    "2013": 11.13,
+    "2014": 10.05,
+    "2015": 10.94,
+    "2016": 10.49,
+    "2017": 9.57,
+    "2018": 10.89,
+    "2019": 9.59,
+    "2020": 11.58,
+    "2021": 10.37,
+    "2022": 11.23,
+    "2023": 9.81,
+    "2024": 10.19,
+    "2025": 10.31
+  }
+}
