@@ -144,6 +144,40 @@ permanently favouring US assets, because the reward removes the payoff of a cons
 **6. Two expected effects show up.** Sizing by risk beats sizing by capital (`core` 0.54
 against `equal_weight` 0.43), and volatility targeting improves SPY (0.64 against 0.54).
 
+## Feature check: high–low range and volume (pre-registered)
+
+Decided with the owner on 14 Nov 2026 after M1, and written here and committed **before the
+check was run**. It is a deviation from the brief: section 8 does not list feature changes
+among the settings that may differ from the defaults.
+
+**Candidate features**, computed per asset and day from `data/multi_ohlcv.csv`, causal, clipped:
+
+- `range_vol_ratio` = ln( sqrt(mean of PK² over the last 10 days) / sqrt(mean of PK² over the
+  last 60 days) ), clipped to [−2, 2], where PK² = (ln(High/Low))² / (4 ln 2) is the Parkinson
+  daily variance. It is the high–low analogue of feature 6.
+- `abnormal_volume` = ln( mean volume over the last 5 days / mean volume over the last 60
+  days ), clipped to [−2, 2].
+
+**Method.** Data: the training window of test year 2015 only (decisions from 2007-04-18
+to 2014-12-30, every return inside the window). Target: the untilted sleeve's excess return
+`s = b · Rex` summed over the next 5 days, and over the next day as a secondary check, with
+each asset's mean over the fitted part removed (as `mu_s` does in the specialist reward).
+Model: ridge regression with `alpha = 1` on standardised features, pooled over the eight
+assets. It is fitted on the cross-fit structure the specialists use (`fold_edges(n, 4, 0.4)`):
+for each block, fitted on the decisions before it, with the last 5 decisions before the
+block left out, and predicting the block. Score: the correlation of predictions and outcomes
+over all block days and assets. Three feature sets: features 0–11 (base), base +
+`range_vol_ratio`, base + `abnormal_volume`. The uncertainty of each improvement over base
+comes from a paired stationary bootstrap over dates (mean block 20 days, 2,000 draws).
+
+**Decision rule.** A candidate feature joins the specialist observation in one extra
+configuration of the layer-1 settings search only if its improvement over base, for the
+5-day target, has a 95% interval entirely above zero. If neither passes, no feature
+configuration is tried and the features are dropped for good. If both pass, the extra
+configuration has both.
+
+*Result: pending.*
+
 ## Settings search (brief section 8)
 
 No configuration tried yet. Every configuration and its cross-fitted score will be listed
