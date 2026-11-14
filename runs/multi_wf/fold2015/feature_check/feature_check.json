@@ -1,0 +1,29 @@
+{
+  "test_year": 2015,
+  "decision_horizon_days": 5,
+  "passed": [],
+  "rule": "improvement over base, 5-day target, 95% interval > 0",
+  "base_features": [
+    "z21",
+    "z63",
+    "z126",
+    "z252",
+    "z1",
+    "z5",
+    "vol_ratio",
+    "vol_level",
+    "equity_stress",
+    "stock_bond_corr",
+    "avg_corr",
+    "trend_breadth"
+  ],
+  "ridge_alpha": 1.0,
+  "bootstrap": {
+    "draws": 2000,
+    "mean_block_days": 20
+  },
+  "window": [
+    "2007-04-18",
+    "2014-12-30"
+  ]
+}

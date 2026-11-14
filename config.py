@@ -117,6 +117,13 @@ MULTI_BREADTH_HORIZON   = 126                  # feature 11
 MULTI_TREND_RULE_HORIZON = 252                 # core_trend: m = 1 + clip(z(252), -1, 1)
 MULTI_TREND_RULE_CLIP   = 1.0
 MULTI_N_MARKET_FEATURES = 12                   # features 0-11; 12 = own previous tilt
+# Candidate features from OHLCV (pre-registered check, RESULTS_MULTI.md); off by default
+MULTI_EXTRA_FEATURES    = ("range_vol_ratio", "abnormal_volume")
+MULTI_RANGE_WINDOWS     = (10, 60)             # Parkinson vol, short / long
+MULTI_VOLUME_WINDOWS    = (5, 60)              # mean volume, short / long
+MULTI_FCHECK_HORIZONS   = (5, 1)               # target horizons; the first decides
+MULTI_FCHECK_RIDGE_ALPHA = 1.0
+MULTI_FCHECK_TEST_YEAR  = 2015
 
 # Specialists (brief section 6)
 SPEC_MODE          = "shared_id"     # shared_id | shared | separate

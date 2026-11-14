@@ -143,3 +143,36 @@ def first_common_date(data_csv=None, tickers=None):
     df = pd.read_csv(csv, parse_dates=["Date"], index_col="Date")
     tickers = list(tickers or config.MULTI_TICKERS)
     return df[tickers].dropna(how="any").index[0]
+
+
+def training_window(dates, test_year, first_decision, train_years=None):
+    """
+    Bars [lo, hi) of the training window of `test_year`: the calendar years
+    test_year − train_years .. test_year − 1, starting no earlier than the first
+    decision bar (warm features).  Decisions that may be fitted are lo .. hi − 2:
+    each earns the return realised at the next bar, which is still inside the window.
+    The first test-year decision is bar hi − 1 (the last close of the previous year).
+    """
+    ty = train_years or config.MULTI_WF_TRAIN_YEARS
+    lo = max(int(dates.searchsorted(pd.Timestamp(f"{test_year - ty}-01-01"))),
+             int(first_decision))
+    hi = int(dates.searchsorted(pd.Timestamp(f"{test_year}-01-01")))
+    if hi - lo < 2:
+        raise ValueError(f"No training window for {test_year}.")
+    return lo, hi
+
+
+def load_ohlcv(dates, tickers=None, ohlcv_csv=None):
+    """{field: DataFrame dates × tickers} from data/multi_ohlcv.csv on `dates`."""
+    csv = ohlcv_csv or config.MULTI_OHLCV_CSV
+    _require(csv, "OHLCV")
+    tickers = list(tickers or config.MULTI_TICKERS)
+    df = pd.read_csv(csv, parse_dates=["Date"])
+    out = {}
+    for field in ["Open", "High", "Low", "Close", "Volume"]:
+        wide = df.pivot(index="Date", columns="Ticker", values=field)
+        wide = wide.reindex(index=dates, columns=tickers).astype(np.float64)
+        if wide.isna().any().any():
+            raise ValueError(f"OHLCV {field} missing on some common dates.")
+        out[field] = wide
+    return out

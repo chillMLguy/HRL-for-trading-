@@ -176,7 +176,25 @@ configuration of the layer-1 settings search only if its improvement over base, 
 configuration is tried and the features are dropped for good. If both pass, the extra
 configuration has both.
 
-*Result: pending.*
+**Result** (`python feature_check_multi.py`, files in `runs/multi_wf/fold2015/feature_check/`).
+Blocks start 2010-05-17, 2011-07-12, 2012-09-05 and 2013-11-01, with 1,161 block days for the
+5-day target.
+
+| Target | Features | Out-of-sample correlation | Change vs base | 95% interval |
+|---|---|---|---|---|
+| 5 days | base (0–11) | 0.0178 | | |
+| 5 days | base + `range_vol_ratio` | 0.0188 | +0.0010 | [−0.0074, +0.0085] |
+| 5 days | base + `abnormal_volume` | 0.0147 | −0.0031 | [−0.0099, +0.0034] |
+| 1 day | base (0–11) | 0.0330 | | |
+| 1 day | base + `range_vol_ratio` | 0.0336 | +0.0007 | [−0.0022, +0.0037] |
+| 1 day | base + `abnormal_volume` | 0.0317 | −0.0013 | [−0.0029, +0.0002] |
+
+Neither feature passes, so **no feature configuration is tried and both are dropped**. The
+range adds nothing measurable once features 6 and 7 (the close-to-close volatility ratio
+and level) are present, and volume slightly hurts. The base features themselves predict
+little: a correlation of 0.018 with the next 5 days' sleeve returns and 0.033 with the next
+day's. That matches the single-asset finding in section 2 of the brief (about 0.05) and is
+the ceiling the specialists work under.
 
 ## Settings search (brief section 8)
 

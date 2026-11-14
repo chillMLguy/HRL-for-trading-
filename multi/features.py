@@ -184,3 +184,23 @@ def trend_rule_tilt(inputs):
     """Tilt of the core_trend baseline: clip(z(252), −1, 1); m = 1 + tilt."""
     c = config.MULTI_TREND_RULE_CLIP
     return np.clip(inputs.z(config.MULTI_TREND_RULE_HORIZON), -c, c)
+
+
+def range_volume_features(ohlcv):
+    """
+    The two pre-registered candidate features, shape (T, N, 2), causal and clipped:
+      range_vol_ratio  ln( Parkinson vol over 10 days / over 60 days )
+      abnormal_volume  ln( mean volume over 5 days / over 60 days )
+    """
+    clip = config.MULTI_LOG_CLIP
+    hl = np.log(ohlcv["High"] / ohlcv["Low"])
+    pk2 = hl ** 2 / (4.0 * np.log(2.0))
+    s_w, l_w = config.MULTI_RANGE_WINDOWS
+    rv = 0.5 * _log_ratio(pk2.rolling(s_w, min_periods=s_w).mean(),
+                          pk2.rolling(l_w, min_periods=l_w).mean(), np.inf)
+    rv = rv.clip(-clip, clip)
+    vol = ohlcv["Volume"]
+    s_w, l_w = config.MULTI_VOLUME_WINDOWS
+    av = _log_ratio(vol.rolling(s_w, min_periods=s_w).mean(),
+                    vol.rolling(l_w, min_periods=l_w).mean(), clip)
+    return np.stack([rv.to_numpy(np.float64), av.to_numpy(np.float64)], axis=2)
