@@ -130,3 +130,26 @@ meta-agent's training days were days the agents had been fitted to.
 
 Runs without `--crossfit` behave exactly as before, so older results stay comparable.
 
+
+---
+
+# November 2026: the multi-asset risk-budget hierarchy (branch `risk-budget-hierarchy`)
+
+The single-asset system does not beat buy and hold, and the diagnosis put the cause in the
+design of its bottom layer: agents that memorise the training years, a reward whose
+drawdown term removed market exposure, and a meta-agent paid through hidden state. The new
+system is built beside it, so the single-asset results stay reproducible as the thesis's
+"what failed" chapter. Its rules: the portfolio is sensible with no learning, learned
+layers only tilt it within fixed bounds and are paid for timing, risk is set by fixed
+rules, and everything is measured in excess returns after costs.
+
+| ID | Change | Where |
+|----|--------|-------|
+| H1 | **Multi-asset data.** Eight ETFs on the dates all of them share (no forward-filled prices) and the T-bill yield `^IRX`, both from local caches only. Every return is an excess return over the last yield known at the start of the period. | `download_multi.py`, `multi/data.py` |
+| H2 | **Causal risk estimates and features.** EWMA vol (span 33, floor 2%) and EWMA covariance (span 60); twelve dimensionless, clipped market features per asset and day. | `multi/features.py` |
+| H3 | **Risk-parity core and one position builder.** Sleeves sized to 10% vol, the core scaled to 10% portfolio vol, learned tilts multiply the core without renormalising, and the same vol and leverage caps apply to every portfolio. All portfolios get positions from `build_positions`. | `multi/portfolio.py` |
+| H4 | **Rule-based baselines and the M1 report.** `core`, `core_trend`, `equal_weight`, `sixty_forty`, `spy_vt`, `spy` over the whole sample. | `report_core_multi.py` |
+| H5 | **Mechanical tests.** Alignment, no look-ahead, the neutral identity, costs, caps, the vol target and the benchmarks, on synthetic prices. | `tests/test_multi.py` |
+
+Nothing under `env/`, `regime/` or the existing scripts changed. `config.py` gained one new
+block at the end; no existing value changed.

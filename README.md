@@ -174,6 +174,28 @@ python walk_forward.py --outroot runs/wf_composite --meta_reward composite
 python walk_forward.py --outroot runs/wf_nohmm     --no_hmm
 ```
 
+## Multi-asset pipeline
+
+A second system lives next to the single-asset one and does not change it: a risk-parity
+core over eight ETFs (`SPY EFA EEM IEF TLT GLD DBC VNQ`), per-asset specialists that tilt
+it, and a weekly allocator that shifts risk between assets. Everything is measured in
+daily net excess returns over the T-bill rate (`^IRX`), after a 2 bp cost. The design and
+its rules are in `RESULTS_MULTI.md` and in the implementation brief.
+
+Status: milestone M1 (data, the core and the rule-based baselines; no learning).
+
+```bash
+python download_multi.py                          # once: data/multi_prices.csv, data/riskfree.csv
+python tests/test_multi.py                        # mechanical tests, synthetic data, seconds
+python report_core_multi.py --outdir runs/multi_core
+```
+
+`report_core_multi.py` builds `core`, `core_trend`, `equal_weight`, `sixty_forty`, `spy_vt`
+and `spy` from the first warm date to the end of 2025 and writes their daily returns,
+summary metrics, Sharpe per year and how often each cap binds to `runs/multi_core/`.
+Constants are in the `# ── Multi-asset risk-budget hierarchy ──` block at the end of
+`config.py`; code is in `multi/`.
+
 ## The dashboard
 
 `python dashboard.py` is the only plotting command. It searches `runs/` and writes one
@@ -228,12 +250,16 @@ meta_seed_study.py     Cross-fitted vs. leaked meta-agents across seeds, agents 
 agent_stability.py     Fold agents vs. final agents on the test year
 
 download_data.py       Refresh data/prices.csv
+
+download_multi.py      Multi-asset: eight ETFs and ^IRX → data/multi_prices.csv, data/riskfree.csv
+report_core_multi.py   Multi-asset M1: the core and rule-based baselines over the whole sample
+multi/                 Multi-asset: data, features, portfolio construction
 pretrain_cnn.py        Optional CNN features (off unless you run this)
 
 env/                   TradingEnv, MetaTradingEnv, shadow books, CNN model
 regime/                HMM detector and rule-based allocators
 common/                Price loading, statistics, validation-Sharpe callback, cross-fit folds
-tests/                 Mechanical checks of the environments and the dashboard
+tests/                 Mechanical checks of the environments, the dashboard and multi/
 data/prices.csv        ^DJI daily closes, so every run uses identical data
 runs/                  Results, one folder per experiment
 CHANGES.md             Why the environments and rewards look the way they do (F1–F12, R1–R7)
