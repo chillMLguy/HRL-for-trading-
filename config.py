@@ -85,9 +85,10 @@ import math as _math
 MULTI_TICKERS        = ["SPY", "EFA", "EEM", "IEF", "TLT", "GLD", "DBC", "VNQ"]
 MULTI_DATA_CSV       = "data/multi_prices.csv"   # Date + one adjusted close per ticker
 MULTI_OHLCV_CSV      = "data/multi_ohlcv.csv"    # Date, Ticker, OHLCV (cached, unused so far)
+MULTI_RAW_CSV        = "data/multi_raw.csv"      # yfinance output as downloaded
 RISKFREE_TICKER      = "^IRX"                    # 13-week T-bill yield, % per year
 RISKFREE_CSV         = "data/riskfree.csv"
-MULTI_DOWNLOAD_START = "2005-01-01"
+MULTI_DOWNLOAD_START = "2005-01-01"   # loaders read from here; download is period="max"
 MULTI_WARM_BARS      = 300      # feature history before any window, never traded
 MULTI_BARS_PER_YEAR  = 252
 

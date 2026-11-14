@@ -128,6 +128,29 @@ try:
 except FileNotFoundError:
     check("1: missing price cache is an error (no yfinance fallback)", True)
 
+# yfinance output saved with .to_csv → the cache files
+import download_multi as dm
+yf_cols = pd.MultiIndex.from_product([["Close", "High", "Low", "Open", "Volume"],
+                                      sorted(TICKERS + ["^IRX"])], names=["Price", "Ticker"])
+yf_raw = pd.DataFrame(np.nan, index=raw.index.rename("Date"), columns=yf_cols)
+for tk in TICKERS:
+    for fld in ["Close", "High", "Low", "Open"]:
+        yf_raw[(fld, tk)] = raw[tk]
+    yf_raw[("Volume", tk)] = 1e6
+yf_raw[("Close", "^IRX")] = synthetic_irx(raw.index, seed=2)
+raw_csv = os.path.join(tmp, "yf_raw.csv")
+yf_raw.to_csv(raw_csv)
+p_split, o_split, i_split = dm.split_raw(dm.read_raw(raw_csv), TICKERS, "^IRX")
+check("1: a saved yf.download CSV splits into closes, OHLCV and the yield",
+      list(p_split.columns) == TICKERS
+      and max_abs_diff(p_split.values, raw.dropna(how="all").values) < 1e-9
+      and set(o_split["Ticker"]) == set(TICKERS) and len(i_split) == len(raw))
+try:
+    dm.split_raw(dm.read_raw(raw_csv).drop(columns="DBC", level=1), TICKERS, "^IRX")
+    check("1: a ticker missing from the download is an error", False)
+except ValueError:
+    check("1: a ticker missing from the download is an error", True)
+
 # ── features: sanity ────────────────────────────────────────────────────────
 print("features")
 P = synthetic_prices(900, seed=3)
