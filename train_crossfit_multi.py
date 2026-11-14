@@ -162,10 +162,18 @@ def stream_scores(stream, inputs):
     r_trend = tilt_returns(inputs, trend_rule_tilt(inputs)[b0:b1], b0, b1)["r"]
     out = {"days": len(tilts), "first": str(inputs.dates[b0].date()),
            "last": str(inputs.dates[b1 - 1].date())}
-    for name, r in (("spec", r_spec), ("trend", r_trend)):
+    trend = trend_rule_tilt(inputs)[b0:b1]
+    for name, r, a in (("spec", r_spec, tilts), ("trend", r_trend, trend)):
         lo, hi = bootstrap_sharpe_ci(r - r_core)
         out[f"{name}_active_sharpe"] = round(active_sharpe(r, r_core), 3)
         out[f"{name}_active_ci"] = [round(lo, 3), round(hi, 3)]
+        # Diagnostic only (uses the stream's own average tilt, i.e. hindsight): the
+        # active Sharpe left once each asset's average tilt is held constant, i.e.
+        # the part that is timing rather than average exposure.
+        const = np.tile(a.mean(axis=0), (len(a), 1))
+        r_const = tilt_returns(inputs, const, b0, b1)["r"]
+        out[f"{name}_timing_only_active_sharpe"] = round(active_sharpe(r, r_const), 3)
+        out[f"{name}_mean_tilt"] = round(float(a.mean()), 3)
     return out, dict(core=r_core, spec=r_spec, trend=r_trend)
 
 

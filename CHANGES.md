@@ -151,5 +151,10 @@ rules, and everything is measured in excess returns after costs.
 | H4 | **Rule-based baselines and the M1 report.** `core`, `core_trend`, `equal_weight`, `sixty_forty`, `spy_vt`, `spy` over the whole sample. | `report_core_multi.py` |
 | H5 | **Mechanical tests.** Alignment, no look-ahead, the neutral identity, costs, caps, the vol target and the benchmarks, on synthetic prices. | `tests/test_multi.py` |
 
+| H6 | **Pre-registered feature check.** High–low range and volume features were tested on the 2015 training window with a cross-fitted ridge regression under a rule fixed before the run; neither passed, so neither is used. | `feature_check_multi.py`, `multi/features.py` |
+| H7 | **Asset specialists.** One SAC network shared by the eight assets tilts each core position between 0 and 2 times; the reward pays only timing (the payoff of a constant tilt over the fit window is removed); a seed ensemble's mean action is the tilt. | `multi/spec_env.py`, `train_specialists.py` |
+| H8 | **Cross-fitted tilt stream.** Specialists and an HMM refitted on the bars before each block of the training window record tilts and regime posteriors on the block. | `train_crossfit_multi.py` |
+| H9 | **Settings search on the first fold.** Defaults and one change at a time, scored by cross-fitted active Sharpe; defaults kept unless a change wins by more than 0.1; frozen for every fold. | `search_multi.py`, `report_spec_multi.py` |
+
 Nothing under `env/`, `regime/` or the existing scripts changed. `config.py` gained one new
 block at the end; no existing value changed.

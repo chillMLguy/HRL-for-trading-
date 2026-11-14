@@ -182,7 +182,7 @@ it, and a weekly allocator that shifts risk between assets. Everything is measur
 daily net excess returns over the T-bill rate (`^IRX`), after a 2 bp cost. The design and
 its rules are in `RESULTS_MULTI.md` and in the implementation brief.
 
-Status: milestone M1 done (data, the core and the rule-based baselines; no learning).
+Status: milestones M1 (data, core, rule-based baselines) and M2 (specialists on the first fold).
 Results and the review are in `RESULTS_MULTI.md`.
 
 ```bash
@@ -194,6 +194,18 @@ python report_core_multi.py --outdir runs/multi_core
 `report_core_multi.py` builds `core`, `core_trend`, `equal_weight`, `sixty_forty`, `spy_vt`
 and `spy` from the first warm date to the end of 2025 and writes their daily returns,
 summary metrics, Sharpe per year and how often each cap binds to `runs/multi_core/`.
+
+Milestone M2, the specialists on the first walk-forward fold (test year 2015). Each 60,000-step
+model takes about 7 minutes on one core; seeds run in parallel (`--workers`):
+
+```bash
+python feature_check_multi.py                     # pre-registered range/volume check (no RL)
+python search_multi.py --layer 1                  # cross-fit streams for the defaults and 4 variants
+python train_specialists.py --outdir runs/multi_wf/fold2015 --test_year 2015   # final ensemble
+python report_spec_multi.py                       # active Sharpe and specialist diagnostics
+```
+
+Every stage skips finished seeds and folds, so an interrupted run continues where it stopped.
 Constants are in the `# ── Multi-asset risk-budget hierarchy ──` block at the end of
 `config.py`; code is in `multi/`.
 
@@ -254,7 +266,12 @@ download_data.py       Refresh data/prices.csv
 
 download_multi.py      Multi-asset: eight ETFs and ^IRX → data/multi_prices.csv, data/riskfree.csv
 report_core_multi.py   Multi-asset M1: the core and rule-based baselines over the whole sample
-multi/                 Multi-asset: data, features, portfolio construction
+multi/                 Multi-asset: data, features, portfolio construction, specialist env
+feature_check_multi.py Multi-asset: pre-registered check of range and volume features
+train_specialists.py   Multi-asset: seed ensemble of specialists on one fit window
+train_crossfit_multi.py Multi-asset: out-of-sample tilt stream of one test year
+search_multi.py        Multi-asset: settings search on the first fold, frozen in settings.json
+report_spec_multi.py   Multi-asset M2: specialist report
 pretrain_cnn.py        Optional CNN features (off unless you run this)
 
 env/                   TradingEnv, MetaTradingEnv, shadow books, CNN model

@@ -1,0 +1,50 @@
+{
+  "layer": "specialist",
+  "mode": "shared_id",
+  "seed": 2015010,
+  "steps": 30000,
+  "spec_lambda": 10.0,
+  "reward_scale": 100.0,
+  "fit_lo": 300,
+  "fit_hi": 1076,
+  "fit_first_decision": "2007-04-18",
+  "fit_last_decision": "2010-05-13",
+  "fit_last_data_bar": "2010-05-14",
+  "episode_bars": 252,
+  "cost_pct": 0.0002,
+  "sac": {
+    "learning_rate": 0.0003,
+    "batch_size": 256,
+    "gamma": 0.9,
+    "tau": 0.005,
+    "ent_coef": "auto",
+    "buffer_size": 30000
+  },
+  "net_arch": [
+    64,
+    64
+  ],
+  "weight_decay": 0.0001,
+  "features": "market features 0-11 + own previous tilt + asset one-hot",
+  "tickers": [
+    "SPY",
+    "EFA",
+    "EEM",
+    "IEF",
+    "TLT",
+    "GLD",
+    "DBC",
+    "VNQ"
+  ],
+  "train_seconds": 190.7,
+  "mu_s": [
+    -4.3804420521320785e-05,
+    -0.00017896763184569432,
+    0.000109520357800429,
+    0.00028792245566826964,
+    0.00015961379142021665,
+    0.0004434460649792317,
+    0.0001620466298511576,
+    3.6279380361703095e-05
+  ]
+}
