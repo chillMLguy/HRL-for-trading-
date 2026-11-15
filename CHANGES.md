@@ -156,5 +156,9 @@ rules, and everything is measured in excess returns after costs.
 | H8 | **Cross-fitted tilt stream.** Specialists and an HMM refitted on the bars before each block of the training window record tilts and regime posteriors on the block. | `train_crossfit_multi.py` |
 | H9 | **Settings search on the first fold.** Defaults and one change at a time, scored by cross-fitted active Sharpe; defaults kept unless a change wins by more than 0.1; frozen for every fold. | `search_multi.py`, `report_spec_multi.py` |
 
+| H10 | **Weekly allocator.** Every 5 days it shifts risk budgets (each within a factor 1.5 before renormalising) and scales gross risk by 0.75–1.25; paid only for what it adds over fixed budgets (two books, the payoff of a constant action removed, a turnover penalty on budget changes). Trained on the out-of-sample stream as `full` (sees the specialists' tilts) and `core_alloc` (no specialists). | `multi/alloc_env.py`, `train_allocator.py` |
+| H11 | **Held-out-block scoring of the allocator.** Each stream block is scored by allocators trained on the other blocks, skipping the 60 days after the held-out one; the score drives the layer-2 settings search. | `train_allocator.py`, `search_multi.py` |
+| H12 | **One test year end to end.** Final HMM, the nine portfolios, the five pre-registered comparisons, the overfit check and the diagnostics of section 9; `run_multi.py` chains every stage with resumable steps and stage timings. | `evaluate_multi.py`, `run_multi.py` |
+
 Nothing under `env/`, `regime/` or the existing scripts changed. `config.py` gained one new
 block at the end; no existing value changed.

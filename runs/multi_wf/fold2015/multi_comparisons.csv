@@ -1,0 +1,6 @@
+first,second,question,sharpe_first,sharpe_second,sharpe_diff,p_value,active_sharpe,active_ci_lo,active_ci_hi,scope
+core_spec,core,Do the specialists add anything?,-1.126,-0.989,-0.138,0.595,-0.86,-3.018,1.582,test year 2015 only
+core_spec,core_trend,Do learned specialists beat a simple trend rule?,-1.126,-0.477,-0.65,0.753,-0.922,-3.074,1.434,test year 2015 only
+full,core_spec,Does the allocator add anything on top of the specialists?,-1.13,-1.126,-0.004,0.522,-0.522,-2.65,1.18,test year 2015 only
+core_alloc,core,Does the allocator add anything by itself?,-1.242,-0.989,-0.253,0.915,-1.562,-2.922,-0.061,test year 2015 only
+full,core,Does the whole hierarchy beat the fixed core?,-1.13,-0.989,-0.141,0.601,-0.953,-3.165,1.256,test year 2015 only

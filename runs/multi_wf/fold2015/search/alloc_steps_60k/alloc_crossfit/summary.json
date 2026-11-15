@@ -1,0 +1,49 @@
+{
+  "steps": 60000,
+  "turnover_pen": 0.5,
+  "seeds_per_holdout": 3,
+  "full": {
+    "baseline": "core_spec",
+    "days": 1165,
+    "first": "2010-05-17",
+    "last": "2014-12-30",
+    "active_sharpe": -0.044,
+    "ci": [
+      -0.7,
+      0.595
+    ],
+    "active_ret_pct_yr": -0.13,
+    "turnover_per_year": 119.3,
+    "baseline_turnover_per_year": 123.0,
+    "per_block": [
+      {
+        "block": 1,
+        "first": "2010-05-17",
+        "last": "2011-07-11",
+        "active_sharpe": -0.371
+      },
+      {
+        "block": 2,
+        "first": "2011-07-12",
+        "last": "2012-09-04",
+        "active_sharpe": -0.217
+      },
+      {
+        "block": 3,
+        "first": "2012-09-05",
+        "last": "2013-10-31",
+        "active_sharpe": 0.324
+      },
+      {
+        "block": 4,
+        "first": "2013-11-01",
+        "last": "2014-12-30",
+        "active_sharpe": -0.011
+      }
+    ],
+    "mean_budget_change": 0.1064,
+    "share_any_u_beyond_095_pct": 55.1,
+    "mean_G": 1.0128,
+    "mean_corr_between_seeds": 0.513
+  }
+}

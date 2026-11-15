@@ -10,5 +10,16 @@
     "steps_30k",
     "steps_120k"
   ],
-  "chosen_on_test_year": 2015
+  "chosen_on_test_year": 2015,
+  "alloc_steps": 30000,
+  "alloc_turnover_pen": 0.25,
+  "alloc_choice": "pen_0.25",
+  "alloc_rule": "keep defaults unless a change beats them by more than 0.1 in held-out-block active Sharpe of full vs core_spec (first fold only)",
+  "alloc_configs_tried": [
+    "default",
+    "steps_15k",
+    "steps_60k",
+    "pen_0.25",
+    "pen_1.0"
+  ]
 }

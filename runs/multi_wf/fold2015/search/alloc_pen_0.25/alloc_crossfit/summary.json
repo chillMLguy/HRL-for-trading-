@@ -1,0 +1,93 @@
+{
+  "steps": 30000,
+  "turnover_pen": 0.25,
+  "seeds_per_holdout": 3,
+  "full": {
+    "baseline": "core_spec",
+    "days": 1165,
+    "first": "2010-05-17",
+    "last": "2014-12-30",
+    "active_sharpe": 0.141,
+    "ci": [
+      -0.654,
+      0.947
+    ],
+    "active_ret_pct_yr": 0.45,
+    "turnover_per_year": 118.7,
+    "baseline_turnover_per_year": 123.0,
+    "per_block": [
+      {
+        "block": 1,
+        "first": "2010-05-17",
+        "last": "2011-07-11",
+        "active_sharpe": -0.838
+      },
+      {
+        "block": 2,
+        "first": "2011-07-12",
+        "last": "2012-09-04",
+        "active_sharpe": 0.541
+      },
+      {
+        "block": 3,
+        "first": "2012-09-05",
+        "last": "2013-10-31",
+        "active_sharpe": 0.489
+      },
+      {
+        "block": 4,
+        "first": "2013-11-01",
+        "last": "2014-12-30",
+        "active_sharpe": 0.366
+      }
+    ],
+    "mean_budget_change": 0.1106,
+    "share_any_u_beyond_095_pct": 56.3,
+    "mean_G": 0.9948,
+    "mean_corr_between_seeds": 0.529
+  },
+  "core_alloc": {
+    "baseline": "core",
+    "days": 1165,
+    "first": "2010-05-17",
+    "last": "2014-12-30",
+    "active_sharpe": 0.382,
+    "ci": [
+      -0.277,
+      1.1
+    ],
+    "active_ret_pct_yr": 1.38,
+    "turnover_per_year": 21.0,
+    "baseline_turnover_per_year": 10.7,
+    "per_block": [
+      {
+        "block": 1,
+        "first": "2010-05-17",
+        "last": "2011-07-11",
+        "active_sharpe": 0.85
+      },
+      {
+        "block": 2,
+        "first": "2011-07-12",
+        "last": "2012-09-04",
+        "active_sharpe": 0.457
+      },
+      {
+        "block": 3,
+        "first": "2012-09-05",
+        "last": "2013-10-31",
+        "active_sharpe": 0.919
+      },
+      {
+        "block": 4,
+        "first": "2013-11-01",
+        "last": "2014-12-30",
+        "active_sharpe": -0.723
+      }
+    ],
+    "mean_budget_change": 0.1241,
+    "share_any_u_beyond_095_pct": 47.0,
+    "mean_G": 1.0092,
+    "mean_corr_between_seeds": 0.542
+  }
+}

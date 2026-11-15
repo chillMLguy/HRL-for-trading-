@@ -147,6 +147,41 @@ def run_layer2(outroot, test_year, workers, only=None, seeds=None):
     return pd.DataFrame(rows)
 
 
+def alloc_run_root(outroot, test_year, choice):
+    fold = os.path.join(outroot, f"fold{test_year}")
+    return fold if choice == "default" else os.path.join(fold, "search", f"alloc_{choice}")
+
+
+def complete_core_alloc(outroot, test_year, chosen, steps, pen, workers):
+    """
+    The variants score only `full`; once a variant is chosen, score `core_alloc` with
+    the same settings so both allocators' held-out scores match what is deployed.
+    """
+    from multi.data import load_universe
+    from multi.features import compute_inputs
+    from train_allocator import crossfit_scores
+    out = os.path.join(alloc_run_root(outroot, test_year, chosen), "alloc_crossfit")
+    path = os.path.join(out, "summary.json")
+    summ = json.load(open(path))
+    if "core_alloc" in summ:
+        return
+    print(f"\nScoring core_alloc with the chosen settings ({chosen}) ...", flush=True)
+    u = load_universe(config.MULTI_DOWNLOAD_START, f"{test_year}-01-01")
+    inputs = compute_inputs(u)
+    stream = pd.read_csv(os.path.join(layer1_stream_root(outroot, test_year), "crossfit",
+                                      "tilts.csv"), parse_dates=["date"])
+    s2, frames = crossfit_scores(inputs, stream, alloc_run_root(outroot, test_year, chosen),
+                                 test_year, summ["seeds_per_holdout"], steps, ("core_alloc",),
+                                 turnover_pen=pen, workers=workers)
+    summ["core_alloc"] = s2["core_alloc"]
+    with open(path, "w") as f:
+        json.dump(summ, f, indent=2)
+    frames["core_alloc"].to_csv(os.path.join(out, "returns_core_alloc.csv"), index=False)
+    sm = s2["core_alloc"]
+    print(f"  core_alloc vs core: active Sharpe {sm['active_sharpe']:.3f} "
+          f"[{sm['ci'][0]:.3f}, {sm['ci'][1]:.3f}]", flush=True)
+
+
 def decide2(table):
     base = float(table.loc[table["config"] == "default", "active_sharpe"].iloc[0])
     others = table[table["config"] != "default"]
@@ -200,6 +235,7 @@ def main():
             json.dump(settings, f, indent=2)
         print(f"\nChosen: {chosen} (steps {steps:,}, turnover pen {pen}) → frozen in "
               f"{settings_path(args.outroot)}")
+        complete_core_alloc(args.outroot, args.test_year, chosen, steps, pen, args.workers)
         return
 
     table = run_layer1(args.outroot, args.test_year, args.workers, args.only)

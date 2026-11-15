@@ -1,0 +1,10 @@
+layer,baseline,window,first,last,active_sharpe
+specialists,core,fit (in sample),2007-04-18,2014-12-30,5.988
+specialists,core,cross-fit blocks,2010-05-17,2014-12-30,0.309
+specialists,core,test,2015-01-02,2015-12-31,-0.86
+allocator full,core_spec,fit (in sample),2010-05-17,2014-12-30,5.488
+allocator full,core_spec,cross-fit blocks (held out),2010-05-17,2014-12-30,0.141
+allocator full,core_spec,test,2015-01-02,2015-12-31,-0.522
+allocator core_alloc,core,fit (in sample),2010-05-17,2014-12-30,5.658
+allocator core_alloc,core,cross-fit blocks (held out),2010-05-17,2014-12-30,0.382
+allocator core_alloc,core,test,2015-01-02,2015-12-31,-1.562

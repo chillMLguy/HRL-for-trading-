@@ -1,0 +1,66 @@
+{
+  "test_year": 2015,
+  "settings": {
+    "spec_steps": 60000,
+    "spec_lambda": 10.0,
+    "spec_choice": "default",
+    "spec_rule": "keep defaults unless a change beats them by more than 0.1 in cross-fitted active Sharpe (first fold only)",
+    "spec_configs_tried": [
+      "default",
+      "lambda_5",
+      "lambda_20",
+      "steps_30k",
+      "steps_120k"
+    ],
+    "chosen_on_test_year": 2015,
+    "alloc_steps": 30000,
+    "alloc_turnover_pen": 0.25,
+    "alloc_choice": "pen_0.25",
+    "alloc_rule": "keep defaults unless a change beats them by more than 0.1 in held-out-block active Sharpe of full vs core_spec (first fold only)",
+    "alloc_configs_tried": [
+      "default",
+      "steps_15k",
+      "steps_60k",
+      "pen_0.25",
+      "pen_1.0"
+    ]
+  },
+  "training_window": [
+    "2007-04-18",
+    "2014-12-31"
+  ],
+  "first_decision": "2014-12-31",
+  "returns": [
+    "2015-01-02",
+    "2015-12-31",
+    252
+  ],
+  "specialists": [
+    "runs/multi_wf/fold2015/models/specialists/seed0",
+    "runs/multi_wf/fold2015/models/specialists/seed1",
+    "runs/multi_wf/fold2015/models/specialists/seed2",
+    "runs/multi_wf/fold2015/models/specialists/seed3",
+    "runs/multi_wf/fold2015/models/specialists/seed4"
+  ],
+  "allocators": {
+    "full": [
+      "runs/multi_wf/fold2015/models/allocator_full/seed0",
+      "runs/multi_wf/fold2015/models/allocator_full/seed1",
+      "runs/multi_wf/fold2015/models/allocator_full/seed2",
+      "runs/multi_wf/fold2015/models/allocator_full/seed3",
+      "runs/multi_wf/fold2015/models/allocator_full/seed4"
+    ],
+    "core_alloc": [
+      "runs/multi_wf/fold2015/models/allocator_core_alloc/seed0",
+      "runs/multi_wf/fold2015/models/allocator_core_alloc/seed1",
+      "runs/multi_wf/fold2015/models/allocator_core_alloc/seed2",
+      "runs/multi_wf/fold2015/models/allocator_core_alloc/seed3",
+      "runs/multi_wf/fold2015/models/allocator_core_alloc/seed4"
+    ]
+  },
+  "hmm": "runs/multi_wf/fold2015/models/hmm_final.pkl",
+  "data_sha256": {
+    "data/multi_prices.csv": "f11e9fe3eb9382a7c791eb03920b6f1490b0c3382e8e4f41016e8649a1d1be94",
+    "data/riskfree.csv": "5b24fdd5c4e3e047c4ebd404608865fd86c4214fef780ff0f865a91058a84fac"
+  }
+}

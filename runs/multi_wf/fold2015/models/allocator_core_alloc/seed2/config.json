@@ -1,0 +1,44 @@
+{
+  "layer": "allocator",
+  "name": "core_alloc",
+  "seed": 2015002,
+  "steps": 30000,
+  "turnover_pen": 0.25,
+  "holdout": null,
+  "first_day": "2010-05-17",
+  "last_day": "2014-12-30",
+  "n_days": 1165,
+  "reward_scale": 100.0,
+  "alloc_lambda": 10.0,
+  "step_days": 5,
+  "episode_decisions": 50,
+  "kappa": 0.4054651081081644,
+  "g_range": 0.25,
+  "purge_after": 60,
+  "cost_pct": 0.0002,
+  "sac": {
+    "learning_rate": 0.0003,
+    "batch_size": 256,
+    "gamma": 0.9,
+    "tau": 0.005,
+    "ent_coef": "auto",
+    "buffer_size": 30000
+  },
+  "net_arch": [
+    64,
+    64
+  ],
+  "weight_decay": 0.0001,
+  "train_seconds": 196.7,
+  "mu_q": [
+    9.475520279052845e-05,
+    3.353782176361866e-05,
+    1.0209066729565541e-05,
+    8.543450906797104e-05,
+    7.835082995175914e-05,
+    2.4825342560880915e-06,
+    -6.14394667641655e-05,
+    0.0001061101813173702
+  ],
+  "n_episode_starts": 915
+}

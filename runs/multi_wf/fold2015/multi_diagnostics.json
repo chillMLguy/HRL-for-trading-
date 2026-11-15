@@ -1,0 +1,124 @@
+{
+  "core": {
+    "realised_vol_pct": 10.91,
+    "target_vol_pct": 10.0,
+    "vol_cap_days_pct": 0.0,
+    "lev_cap_days_pct": 0.0,
+    "gross_mean": 1.443,
+    "gross_max": 1.988
+  },
+  "specialists": {
+    "per_asset": [
+      {
+        "ticker": "SPY",
+        "mean_tilt": 0.07,
+        "share_abs_gt_095_pct": 1.19,
+        "lag1_autocorr": 0.574,
+        "corr_with_trend_tilt": 0.408
+      },
+      {
+        "ticker": "EFA",
+        "mean_tilt": -0.009,
+        "share_abs_gt_095_pct": 0.794,
+        "lag1_autocorr": 0.506,
+        "corr_with_trend_tilt": -0.239
+      },
+      {
+        "ticker": "EEM",
+        "mean_tilt": 0.176,
+        "share_abs_gt_095_pct": 3.968,
+        "lag1_autocorr": 0.627,
+        "corr_with_trend_tilt": -0.342
+      },
+      {
+        "ticker": "IEF",
+        "mean_tilt": -0.016,
+        "share_abs_gt_095_pct": 0.0,
+        "lag1_autocorr": 0.505,
+        "corr_with_trend_tilt": -0.362
+      },
+      {
+        "ticker": "TLT",
+        "mean_tilt": -0.057,
+        "share_abs_gt_095_pct": 3.571,
+        "lag1_autocorr": 0.702,
+        "corr_with_trend_tilt": -0.636
+      },
+      {
+        "ticker": "GLD",
+        "mean_tilt": -0.085,
+        "share_abs_gt_095_pct": 0.397,
+        "lag1_autocorr": 0.786,
+        "corr_with_trend_tilt": -0.456
+      },
+      {
+        "ticker": "DBC",
+        "mean_tilt": 0.567,
+        "share_abs_gt_095_pct": 15.476,
+        "lag1_autocorr": 0.766,
+        "corr_with_trend_tilt": NaN
+      },
+      {
+        "ticker": "VNQ",
+        "mean_tilt": -0.13,
+        "share_abs_gt_095_pct": 0.794,
+        "lag1_autocorr": 0.587,
+        "corr_with_trend_tilt": -0.075
+      }
+    ],
+    "mean_corr_between_seeds": 0.34,
+    "corr_final_vs_fold_specialists_on_test_year": {
+      "fold1": 0.643,
+      "fold2": 0.672,
+      "fold3": 0.613,
+      "fold4": 0.723
+    },
+    "turnover_per_year": 99.9
+  },
+  "allocators": {
+    "full": {
+      "decisions": 51,
+      "mean_budget_change": 0.1038,
+      "share_any_u_beyond_095_pct": 31.4,
+      "mean_G": 1.1263,
+      "mean_beta": [
+        0.1228,
+        0.125,
+        0.1286,
+        0.1122,
+        0.1161,
+        0.108,
+        0.1543,
+        0.1331
+      ],
+      "mean_corr_between_seeds": 0.38,
+      "penalty_check_on_stream_in_sample": {
+        "reward_std": 0.5457,
+        "mean_penalty": 0.0317,
+        "penalty_ratio": 0.058
+      }
+    },
+    "core_alloc": {
+      "decisions": 51,
+      "mean_budget_change": 0.0736,
+      "share_any_u_beyond_095_pct": 52.9,
+      "mean_G": 1.175,
+      "mean_beta": [
+        0.1444,
+        0.157,
+        0.1355,
+        0.0923,
+        0.0895,
+        0.1115,
+        0.1304,
+        0.1394
+      ],
+      "mean_corr_between_seeds": 0.429,
+      "penalty_check_on_stream_in_sample": {
+        "reward_std": 0.4915,
+        "mean_penalty": 0.0321,
+        "penalty_ratio": 0.0653
+      }
+    }
+  }
+}

@@ -10,8 +10,8 @@ not been run yet.
 | Milestone | State |
 |---|---|
 | M1: data and core, no training | Done, reviewed |
-| M2: specialists on the first fold | Done, awaiting review (below) |
-| M3: allocator on the first fold, one whole fold | Not started |
+| M2: specialists on the first fold | Done, reviewed |
+| M3: allocator on the first fold, one whole fold | Done, awaiting review (below) |
 | M4: walk-forward grid | Not started, runs only on request |
 
 ## M1: the core and the rule-based baselines
@@ -292,6 +292,148 @@ holding more risk, as in M1. Pre-registered comparison 2 (`core_spec` against `c
 therefore partly a comparison of timing with exposure. I will report the timing-only
 diagnostic next to it, without changing the comparison.
 
+## M3: the allocator on the first fold, and the whole 2015 fold
+
+```bash
+python search_multi.py --layer 2          # held-out-block scores, freezes the allocator settings
+python train_allocator.py --outdir runs/multi_wf/fold2015 --test_year 2015
+python evaluate_multi.py --outdir runs/multi_wf/fold2015 --test_year 2015
+```
+
+The allocators train on the 2015 fold's cross-fit stream (the specialists' out-of-sample
+tilts and HMM posteriors, May 2010 to Dec 2014, 1,165 days). `full` sees the tilts; `core_alloc`
+sees m = 1.
+
+**Reward scale check.** Under uniformly random actions on the stream, the reward has a
+standard deviation of 0.28 (`full`) and 0.27 (`core_alloc`), inside 0.1–3, so
+`ALLOC_REWARD_SCALE` stays at 100.
+
+**Penalty ratio** (mean turnover penalty / standard deviation of the reward):
+
+| Policy | Turnover penalty | `full` | `core_alloc` |
+|---|---|---|---|
+| Uniformly random actions | 0.25 (chosen) | 0.22 | 0.23 |
+| Uniformly random actions | 0.5 (default) | 0.45 | 0.46 |
+| Uniformly random actions | 1.0 | 0.88 | 0.91 |
+| Trained final allocators on the stream (in sample) | 0.25 | 0.058 | 0.065 |
+
+The brief does not say under which policy the ratio is measured. Under random actions the
+chosen penalty sits inside the 0.1–0.5 band; under the trained policies it is about 0.06,
+below the band, because the trained allocators take large active bets (reward standard
+deviation 0.49–0.55 against 0.27 for random actions). I did not change the penalty beyond the
+settings search (section 8 allows only 0.25 / 0.5 / 1.0, chosen on held-out scores).
+
+### Held-out-block scores (first fold, before 2015)
+
+Each stream block is scored by allocators (3 seeds) trained on the other three blocks,
+skipping the 60 days after the held-out block. Net excess returns after costs, final
+settings (30,000 steps, turnover penalty 0.25):
+
+| Allocator | Against | Active Sharpe | 95% interval | Blocks 1–4 | Active return / yr | Turnover / yr (baseline) |
+|---|---|---|---|---|---|---|
+| `full` | `core_spec` | 0.14 | [−0.65, 0.95] | −0.84, 0.54, 0.49, 0.37 | +0.45% | 118.7 (123.0) |
+| `core_alloc` | `core` | 0.38 | [−0.28, 1.10] | 0.85, 0.46, 0.92, −0.72 | +1.38% | 21.0 (10.7) |
+
+Allocator diagnostics on the held-out blocks: the budgets move by 0.11 (`full`) and 0.12
+(`core_alloc`) per decision in total absolute change; 56% and 47% of decisions push at least
+one asset's action beyond ±0.95; mean G is 0.99 and 1.01; seeds trained on the same data
+correlate 0.53 and 0.54.
+
+### The 2015 fold (one year: a description, not a result)
+
+Files: `runs/multi_wf/fold2015/multi_*.csv`. Returns realised 2015-01-02 to 2015-12-31, 252 days.
+
+| Portfolio | Sharpe | Return % | Vol % | Max DD % | Turnover / yr | Cost % / yr | Gross mean | Vol cap / lev cap days % |
+|---|---|---|---|---|---|---|---|---|
+| `core` | −0.99 | −10.8 | 10.9 | 16.7 | 12.4 | 0.25 | 1.44 | 0 / 0 |
+| `core_trend` | −0.48 | −6.0 | 12.5 | 16.6 | 25.7 | 0.51 | 1.71 | 0.8 / 5.6 |
+| `core_spec` | −1.13 | −14.9 | 13.3 | 17.5 | 99.9 | 2.00 | 1.51 | 7.9 / 1.2 |
+| `core_alloc` | −1.24 | −17.7 | 14.3 | 22.5 | 18.9 | 0.38 | 1.61 | 0 / 0 |
+| `full` | −1.13 | −16.7 | 14.8 | 19.4 | 106.9 | 2.14 | 1.61 | 27.4 / 0.8 |
+| `equal_weight` | −1.01 | −10.8 | 10.7 | 16.1 | 6.6 | 0.13 | 1.18 | 0 / 0 |
+| `sixty_forty` | −0.11 | −1.2 | 10.6 | 9.9 | 7.2 | 0.14 | 1.28 | 0 / 0 |
+| `spy_vt` | −0.22 | −2.3 | 10.5 | 9.9 | 4.0 | 0.08 | 0.72 | 0 / 0 |
+| `spy` | 0.15 | 2.4 | 15.4 | 11.9 | 1.0 | 0.02 | 1.00 | – |
+
+The five pre-registered comparisons, 2015 alone:
+
+| Pair | Sharpe difference | p-value | Active Sharpe | 95% interval |
+|---|---|---|---|---|
+| `core_spec` vs `core` | −0.14 | 0.60 | −0.86 | [−3.02, 1.58] |
+| `core_spec` vs `core_trend` | −0.65 | 0.75 | −0.92 | [−3.07, 1.43] |
+| `full` vs `core_spec` | −0.00 | 0.52 | −0.52 | [−2.65, 1.18] |
+| `core_alloc` vs `core` | −0.25 | 0.92 | −1.56 | [−2.92, −0.06] |
+| `full` vs `core` | −0.14 | 0.60 | −0.95 | [−3.17, 1.26] |
+
+Overfit check, active Sharpe of each learned layer against its baseline:
+
+| Layer | Fit window (in sample) | Cross-fit blocks (out of sample) | Test year 2015 |
+|---|---|---|---|
+| Specialists vs `core` | 5.99 | 0.31 | −0.86 |
+| Allocator `full` vs `core_spec` | 5.49 | 0.14 (held out) | −0.52 |
+| Allocator `core_alloc` vs `core` | 5.66 | 0.38 (held out) | −1.56 |
+
+Diagnostics on 2015:
+- **Core:** realised volatility 10.9% against the 10% target; neither cap binds; gross exposure
+  1.44 on average, 1.99 at most.
+- **Specialists:** turnover 100 times capital a year. Seeds correlate 0.34. The final
+  specialists' tilts correlate 0.61–0.72 with each fold ensemble's tilts on 2015, so the allocator
+  is deployed on behaviour moderately like what it was trained on. The tilt on DBC averaged +0.57
+  (15% of days beyond 0.95) through the 2015 commodity collapse, against a trend tilt pinned at −1
+  all year.
+- **Allocators:** `full` / `core_alloc` change budgets by 0.10 / 0.07 per decision; 31% / 53% of
+  decisions have some action beyond ±0.95; mean G is 1.13 / 1.18, so both raised total risk in a
+  losing year; seeds correlate 0.38 / 0.43. `core_alloc` leaned towards equities (mean budget
+  0.14–0.16 for SPY and EFA) and away from bonds (0.09 for IEF and TLT).
+
+### Findings
+
+**1. The allocator shows no reliable skill on held-out data.** `full` adds 0.14 [−0.65, 0.95]
+over `core_spec` and `core_alloc` 0.38 [−0.28, 1.10] over the core. Both intervals include zero.
+
+**2. It memorises its training stream, like the specialists.** On the stream it trained on, its
+active Sharpe is 5.5–5.7, against 0.14–0.38 on held-out blocks and −0.52 / −1.56 in 2015. Weekly
+decisions, bounded actions and an adjustment that removes the payoff of a constant action did
+not stop it: it learned state-dependent bets that do not carry over.
+
+**3. Its turnover is bounded, unlike the old meta-agent's.** Budgets move by about 0.1 per
+weekly decision (the old meta-agent changed weights by 0.8–0.9 a day). But the policy is often
+bang-bang: in half the decisions some action sits at its bound.
+
+**4. 2015 was a bad year for every learned layer, and for the core** (Sharpe −0.99, the
+commodity and emerging-market collapse). `core_alloc` against `core` is the only comparison
+whose 2015 interval excludes zero, and it is negative (−1.56). One year carries a standard error
+of about 1 for a Sharpe ratio, so this describes 2015; only the pooled walk-forward can be a result.
+
+**5. The `full` portfolio hits the volatility cap on 27% of days in 2015**, against 8% for
+`core_spec`. The allocator raised G while the specialists tilted up, and the cap cut the
+combination back. When the cap binds, neither layer's reward matches its effect in the portfolio.
+
+### Time for the full walk-forward grid
+
+Measured on this 2-core machine (two models training in parallel): 7.0 minutes per 60,000-step
+specialist (mean of 41 runs) and 3.3 minutes per 30,000-step allocator (mean of 10). A fold
+from scratch trains 17 specialists (5 final, 4 blocks × 3 seeds) and 10 allocators (2 × 5 seeds):
+
+| Stage | Models | Core-minutes | Wall time on 2 cores |
+|---|---|---|---|
+| Final specialists | 5 × 60k | 35 | ~21 min |
+| Cross-fit stream | 12 × 60k | 84 | ~43 min |
+| Allocators | 10 × 30k | 33 | ~17 min |
+| Final HMM, inference, evaluation | – | ~2 | ~2 min |
+| **One fold** | | **~155 (2.6 core-hours)** | **~80 min** |
+
+The settings search runs only on the first fold, which is done. The remaining ten folds
+(2016–2025) need about 26 core-hours: about 13–14 hours here, or roughly 26 / W hours on a
+machine with W free cores at this per-core speed. `run_multi.py --quick` ran the whole 2015
+pipeline from scratch in 5 minutes (specialists 1.8, stream 1.6, allocators 1.6, evaluation 0.1).
+
+**Order of work, for the record.** A mechanics check of `evaluate_multi.py` (with untrained
+400-step allocators) printed 2015 numbers before the layer-2 settings search had finished. The
+search's rule and its candidate settings were fixed in advance (section 8: beat the defaults by
+more than 0.1 on held-out blocks before 2015), so no choice could depend on 2015. Every 2015 number
+above comes from the final, frozen models.
+
 ## Settings search (brief section 8)
 
 Layer 1, first fold only, scored by the cross-fitted active Sharpe of `core_spec` against
@@ -308,8 +450,24 @@ Layer 1, first fold only, scored by the cross-fitted active Sharpe of `core_spec
 The best change (120,000 steps) beats the defaults by 0.07, under the 0.1 margin, so **the
 defaults are kept** and frozen in `runs/multi_wf/settings.json` for every fold. Every interval
 spans about −0.8 to +1.3: the differences between configurations are noise. Configurations
-tried so far: 5 for layer 1, plus the feature check, which ran no configuration. Layer 2
-follows in M3.
+tried so far: 5 for layer 1, plus the feature check, which ran no configuration.
+
+Layer 2, first fold only, scored by the held-out-block active Sharpe of `full` against
+`core_spec` (`runs/multi_wf/fold2015/search_layer2.csv`):
+
+| Configuration | Steps | Turnover penalty | Active Sharpe | 95% interval | Budget change / decision | Decisions with abs(u) > 0.95 % | Mean G |
+|---|---|---|---|---|---|---|---|
+| default | 30,000 | 0.5 | −0.141 | [−0.851, 0.592] | 0.105 | 55.9 | 1.00 |
+| steps_15k | 15,000 | 0.5 | −0.303 | [−0.998, 0.409] | 0.083 | 19.5 | 1.00 |
+| steps_60k | 60,000 | 0.5 | −0.044 | [−0.700, 0.595] | 0.106 | 55.1 | 1.01 |
+| pen_0.25 | 30,000 | 0.25 | **0.141** | [−0.654, 0.947] | 0.111 | 56.3 | 0.99 |
+| pen_1.0 | 30,000 | 1.0 | 0.019 | [−0.658, 0.722] | 0.085 | 58.9 | 1.01 |
+
+`pen_0.25` beats the defaults by 0.28, more than the 0.1 margin, so **the turnover penalty is
+0.25** for every fold (`runs/multi_wf/settings.json`). All five intervals overlap heavily: this
+is the best of five noisy estimates, which is why every configuration tried enters the Deflated
+Sharpe. `core_alloc` was scored again with the chosen settings: 0.382 [−0.277, 1.100] (0.420 with
+the defaults). **Configurations tried: 5 for layer 1 and 5 for layer 2.**
 
 ## Deviations from the brief and interpretations
 
@@ -329,3 +487,8 @@ follows in M3.
 | 12 | `multi/data.py`, `train_crossfit_multi.py` | Fit windows end strictly before what they are evaluated on: a fold's last training reward uses the return realised at the bar before its block starts. The stream and the final fit stop at the last decision whose return is realised inside the training window, so the stream ends on 2014-12-30, not 2014-12-31. |
 | 13 | `search_multi.py`, `report_spec_multi.py` | A timing-only active Sharpe (average tilt held constant, hindsight) is reported next to the brief's active Sharpe. It never enters a decision; the search uses the brief's criterion. |
 | 14 | `report_spec_multi.py` | The correlation of fold and final specialists is computed on the cross-fit blocks in M2 (where the final ensemble is in sample). The brief's test-year version (section 8) comes with the M3 evaluation. |
+| 15 | `train_allocator.py` | The brief asks for a cross-fitted score of the allocator but trains it on every block. The score is held-out-block cross-validation: each stream block is scored by allocators trained on the other blocks, skipping the 60 days after the held-out block (their 60-day sleeve-performance input contains its returns). Forward-only chaining left too little data (one 291-day block for the second block). A second-order leak remains: tilts and HMM posteriors on later blocks come from specialists and HMMs fitted on data that includes the held-out block. |
+| 16 | `multi/portfolio.py` | `ex_ante_vol` uses matmul instead of einsum. einsum's summation order depended on how many rows were passed, so a 5-day slice differed from the full sample by about 1e-16, and the allocator's zero action did not reproduce the fixed portfolio exactly (test 3). Positions changed by about 1e-17; no reported number moved. |
+| 17 | `search_multi.py` | The layer-2 variants score only `full` (the brief's criterion). Once a variant was chosen, `core_alloc` was scored again with the same settings so both allocators' held-out scores match what is deployed. |
+| 18 | `multi/alloc_env.py`, `evaluate_multi.py` | The sleeve-performance input needs 60 days of tilted sleeve returns. On the stream, the 60 days before it use m = 1 (untilted sleeves); in the test year, the history uses the final specialists' tilts on the 62 days before the year. |
+| 19 | `train_allocator.py` | The penalty ratio is reported under random actions and under the trained policies, because the brief does not say which; see the M3 section. |

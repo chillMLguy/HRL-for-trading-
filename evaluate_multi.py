@@ -194,7 +194,9 @@ def evaluate(fold, test_year, settings_root=None):
     win.append({"layer": "specialists", "baseline": "core", "window": "test",
                 "first": str(ret_dates[0].date()), "last": str(ret_dates[-1].date()),
                 "active_sharpe": round(active_sharpe(returns["core_spec"], returns["core"]), 3)})
-    cf_path = os.path.join(fold, "alloc_crossfit", "summary.json")
+    choice = settings.get("alloc_choice", "default")
+    cf_root = fold if choice == "default" else os.path.join(fold, "search", f"alloc_{choice}")
+    cf_path = os.path.join(cf_root, "alloc_crossfit", "summary.json")
     cf = json.load(open(cf_path)) if os.path.isfile(cf_path) else {}
     penalty = {}
     for name, base in (("full", "core_spec"), ("core_alloc", "core")):

@@ -182,7 +182,8 @@ it, and a weekly allocator that shifts risk between assets. Everything is measur
 daily net excess returns over the T-bill rate (`^IRX`), after a 2 bp cost. The design and
 its rules are in `RESULTS_MULTI.md` and in the implementation brief.
 
-Status: milestones M1 (data, core, rule-based baselines) and M2 (specialists on the first fold).
+Status: milestones M1 (data, core, rule-based baselines), M2 (specialists on the first fold)
+and M3 (allocator, one whole fold).
 Results and the review are in `RESULTS_MULTI.md`.
 
 ```bash
@@ -206,6 +207,21 @@ python report_spec_multi.py                       # active Sharpe and specialist
 ```
 
 Every stage skips finished seeds and folds, so an interrupted run continues where it stopped.
+
+Milestone M3, the weekly allocator and one whole fold:
+
+```bash
+python search_multi.py --layer 2                  # allocator settings, scored on held-out blocks
+python train_allocator.py --outdir runs/multi_wf/fold2015 --test_year 2015   # full and core_alloc
+python evaluate_multi.py --outdir runs/multi_wf/fold2015 --test_year 2015    # the test year
+python run_multi.py --outdir runs/multi_quick --quick   # whole pipeline for one year, mechanics only
+```
+
+`run_multi.py` runs stages 1–5 of one test year (inputs, final specialists, cross-fit stream,
+allocators, evaluation) with the settings frozen in `runs/multi_wf/settings.json`, skipping
+stages that are done, and writes `timing.json`. A test year's files are `multi_returns.csv`
+(the nine series), `multi_metrics.csv`, `multi_comparisons.csv`, `multi_window_sharpe.csv`,
+`multi_diagnostics.json`, positions, tilts and budgets. One year is a description, not a result.
 Constants are in the `# ── Multi-asset risk-budget hierarchy ──` block at the end of
 `config.py`; code is in `multi/`.
 
@@ -272,6 +288,9 @@ train_specialists.py   Multi-asset: seed ensemble of specialists on one fit wind
 train_crossfit_multi.py Multi-asset: out-of-sample tilt stream of one test year
 search_multi.py        Multi-asset: settings search on the first fold, frozen in settings.json
 report_spec_multi.py   Multi-asset M2: specialist report
+train_allocator.py     Multi-asset: weekly allocators (full, core_alloc) on the stream
+evaluate_multi.py      Multi-asset: one test year, the nine series and diagnostics
+run_multi.py           Multi-asset: one test year end to end (--quick for mechanics)
 pretrain_cnn.py        Optional CNN features (off unless you run this)
 
 env/                   TradingEnv, MetaTradingEnv, shadow books, CNN model
