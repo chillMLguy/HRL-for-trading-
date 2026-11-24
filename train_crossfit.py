@@ -27,7 +27,7 @@ import pandas as pd
 from stable_baselines3 import SAC
 
 from common.crossfit import fold_edges, stream_path
-from common.data import load_prices
+from common.data import load_prices, vix_settings, check_vix_dir
 from env.trading_env import TradingEnv
 from regime.allocators import AGENT_ORDER
 from regime.hmm_regime import HMMRegimeDetector
@@ -47,8 +47,9 @@ def propose_block(fold_dir, prices, start, end, cost_pct, ann):
     first = start - lo
     actions = {}
     for name in AGENT_ORDER:
-        model = SAC.load(os.path.join(fold_dir, "models", f"{name}_agent",
-                                      "best_model"))
+        agent_dir = os.path.join(fold_dir, "models", f"{name}_agent")
+        check_vix_dir(agent_dir, f"{name} agent in {fold_dir}")
+        model = SAC.load(os.path.join(agent_dir, "best_model"))
         env = TradingEnv(warm, preset=name, bars_per_year=ann, cost_pct=cost_pct,
                          eval_mode=True, start_index=first)
         obs, _ = env.reset()
@@ -146,7 +147,7 @@ def main():
     with open(os.path.join(root, "config.json"), "w") as f:
         json.dump({"folds": args.folds, "min_train_frac": args.min_train_frac,
                    "train_start": args.train_start, "train_end": args.train_end,
-                   "cost_pct": args.cost_pct, "seed": args.seed,
+                   "cost_pct": args.cost_pct, "seed": args.seed, **vix_settings(),
                    "agent_order": AGENT_ORDER, "blocks": blocks}, f, indent=2)
     print(f"\n✓ Proposal stream → {stream_path(args.outdir)} "
           f"({sum(len(x) for x in parts)} bars)")

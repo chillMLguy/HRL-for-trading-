@@ -130,3 +130,21 @@ meta-agent's training days were days the agents had been fitted to.
 
 Runs without `--crossfit` behave exactly as before, so older results stay comparable.
 
+---
+
+# November 2026: SPY with VIX inputs (branch `spy-vix`)
+
+Back to the single-asset hierarchy after the multi-asset risk-budget branch, as the base for
+further model checks. Built on `crossfit-meta`, so cross-fitting and the overfitting check
+are included.
+
+| ID | Change | Where |
+|----|--------|-------|
+| D1 | **SPY instead of `^DJI`.** Dividend-adjusted daily closes from 2005, so Buy & Hold includes dividends. `download_data.py` gets SPY and VIX in one Yahoo request into `data/spy_vix.csv`. | `config.py`, `download_data.py` |
+| D2 | **Costs of 0.2 bp** instead of 2 bp, about SPY's one-cent spread. | `config.COST_PCT` |
+| R16 | **Four VIX inputs** for every agent and the meta-agent: level, level relative to the past year, 5-day change, and implied minus realized volatility. Agents now see 24 inputs; the meta-agent sees 4 more than before. | `env/trading_env.py`, `env/meta_env.py` |
+| R17 | **No look-ahead from VIX.** VIX closes 15 minutes after SPY, so the previous day's close is used by default; `--vix_lag 0` is the same-day variant. VIX is forward-filled only on the rare SPY days without a VIX close; prices never are. VIX is read from the same file as the prices. | `env/trading_env.py`, `common/data.py` |
+| R18 | **No-VIX ablation.** `--no_vix` zeroes the VIX inputs at the same observation size. Each model saves its VIX settings, and every script that loads a model refuses one trained with other settings. | `run_all.py`, `walk_forward.py`, `common/data.py`, all train and evaluate scripts |
+
+Checks: `tests/test_vix.py`. Models from earlier branches have 20 agent inputs and can't be
+loaded on this branch; their CSVs still show in the dashboard.

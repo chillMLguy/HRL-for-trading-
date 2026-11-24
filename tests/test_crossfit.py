@@ -19,6 +19,7 @@ from overfit_check import _net, _positions, stream_rows
 from regime.allocators import AGENT_ORDER, EqualWeightAllocator
 from evaluate_phase1 import run_allocator
 import config
+config.USE_VIX = False      # synthetic prices have no VIX; tests/test_vix.py covers it
 
 OK = []
 

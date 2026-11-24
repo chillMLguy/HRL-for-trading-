@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 
+import config
 from common.data import load_prices
 from env.cnn_model import PricePatternCNN
 
@@ -59,7 +60,7 @@ def main():
     # F12: defaults must NEVER overlap a test window — the old defaults
     # (SPY 1h 2024-04 → 2025-10) would leak test-period information into the
     # CNN features of any run that tests on 2024/2025.
-    parser.add_argument("--ticker",     default="^DJI")
+    parser.add_argument("--ticker",     default=config.TICKER)
     parser.add_argument("--start",      default="2013-01-01")
     parser.add_argument("--end",        default="2023-12-31")
     parser.add_argument("--interval",   default="1d",

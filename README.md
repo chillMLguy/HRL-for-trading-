@@ -1,7 +1,10 @@
 # Hierarchical RL for Trading
 
 Master's thesis project: a two-level reinforcement learning system that trades the
-Dow Jones Index (`^DJI`) on daily bars.
+SPY ETF on daily bars, with the VIX index as an extra input to every model.
+
+This is branch `spy-vix`. Earlier branches traded the Dow Jones Index (`^DJI`) with 2 bp
+costs and no VIX. The changes are listed at the end of [CHANGES.md](CHANGES.md).
 
 - **Low level:** three frozen SAC agents with different risk profiles (aggressive,
   balanced, conservative). Each outputs a position in `[-1, 1]`, scaled by its own cap.
@@ -11,7 +14,7 @@ Dow Jones Index (`^DJI`) on daily bars.
 
 ```mermaid
 flowchart LR
-    P["Prices<br/>data/prices.csv"] --> A["Phase 0<br/>train 3 agents"]
+    P["SPY and VIX<br/>data/spy_vix.csv"] --> A["Phase 0<br/>train 3 agents"]
     P --> H["Phase 1<br/>fit HMM and vol thresholds"]
     A --> M["Phase 2<br/>train meta-agent"]
     H --> M
@@ -55,26 +58,46 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Check the installation
+### 3. Download SPY and VIX
+
+```bash
+python download_data.py
+```
+
+This writes `data/spy_vix.csv` with columns `Date`, `SPY` and `^VIX` from 2005 on, in one
+Yahoo request. Commit and push it, so every machine and every rerun uses the same data:
+
+```bash
+git add data/spy_vix.csv
+git commit -m "SPY and VIX data"
+git push
+```
+
+If the download fails, any CSV with those three columns works: `SPY` as dividend-adjusted
+closes, `^VIX` as closes.
+
+### 4. Check the installation
 
 ```bash
 python tests/test_envs.py
 python tests/test_crossfit.py
 python tests/test_dashboard.py
+python tests/test_vix.py
 ```
 
 Every line should start with `✓`. These take under a minute and need no training.
 
-### 4. Look at the existing results
+### 5. Look at the existing results
 
 ```bash
 python dashboard.py
 ```
 
 This writes `dashboard.html`. Open it in a browser, for example `open dashboard.html` on
-macOS. It reads the CSV files already in `runs/`, so nothing is trained.
+macOS. It reads the CSV files already in `runs/`, so nothing is trained. The runs already
+in the repo are `^DJI` runs from earlier branches.
 
-### 5. Run the pipeline end to end
+### 6. Run the pipeline end to end
 
 Run this once on a new machine to confirm that training works. It trains all three phases
 with a small budget, then evaluates them on 2024. Results go to `runs/latest/`, which git
@@ -90,9 +113,9 @@ This took about 15 minutes on a 2-core machine. Keep `OMP_NUM_THREADS=1` for all
 that machine a small walk-forward cell ran more than 5 times faster than with the default
 threading.
 
-Prices come from `data/prices.csv`, which is in the repo, so no download is needed.
+Prices and VIX come from `data/spy_vix.csv` (step 3).
 
-### 6. Run a full experiment
+### 7. Run a full experiment
 
 One split, with the defaults from `config.py` (train 2013–2023, test 2024):
 
@@ -108,7 +131,7 @@ python run_all.py --outdir runs/split2022 --full \
     --test_start 2022-01-01 --test_end 2022-12-31
 ```
 
-### 7. Run the walk-forward experiment
+### 8. Run the walk-forward experiment
 
 This is the experiment the thesis conclusions should rest on: every test year in
 `config.WF_TEST_YEARS`, each trained on the previous 8 years, for each seed in
@@ -130,7 +153,7 @@ python walk_forward.py --outroot runs/wf_try --years 2022 2024 --seeds 0 \
 
 The dashboard pools each walk-forward folder into one entry in its run selector.
 
-### 8. Train the meta-agent on out-of-sample behaviour
+### 9. Train the meta-agent on out-of-sample behaviour
 
 By default the meta-agent trains on days the agents were fitted to, so it sees them
 performing far better than they will on new data. With `--crossfit` it learns only from what
@@ -163,16 +186,42 @@ test year:
 python agent_stability.py --rundir runs/crossfit_2024
 ```
 
-### 9. Run the ablation studies
+### 10. Run the ablation studies
 
 Use the same grid with one feature removed, each in its own folder:
 
 ```bash
+python walk_forward.py --outroot runs/wf_novix     --no_vix
+python walk_forward.py --outroot runs/wf_vixlag0   --vix_lag 0
 python walk_forward.py --outroot runs/wf_nocash    --no_cash
 python walk_forward.py --outroot runs/wf_novol     --vol_target 0
 python walk_forward.py --outroot runs/wf_composite --meta_reward composite
 python walk_forward.py --outroot runs/wf_nohmm     --no_hmm
 ```
+
+`run_all.py` takes the same flags for one split.
+
+## VIX inputs
+
+Every agent and the meta-agent see four VIX features next to the price features:
+
+| Input | Definition | What it says |
+|---|---|---|
+| `vix_level` | ln(VIX / 20) | Expected volatility relative to its long-run norm |
+| `vix_rel` | ln(VIX / median VIX of the previous 252 days) | Fear relative to the past year |
+| `vix_chg` | ln(VIX today / VIX 5 days ago) | A volatility shock building or fading |
+| `vrp` | VIX / 100 − realized 20-day volatility | Variance risk premium: implied minus realized |
+
+- **Timing.** VIX closes at 4:15 pm ET, 15 minutes after SPY. A decision at SPY's close
+  therefore uses the previous day's VIX by default (`VIX_LAG_DAYS = 1`). `--vix_lag 0` uses
+  the same day's close, which is slightly optimistic.
+- **Ablation.** `--no_vix` sets the four inputs to zero and keeps the observation size, so
+  the two runs differ only in the information the models get.
+- **Safety.** Each model's `config.json` records `use_vix` and `vix_lag_days`. Every script
+  that loads a model refuses one trained with other settings. To run a single script on a
+  `--no_vix` run, prefix it, for example `HRL_USE_VIX=0 python evaluate_phase2.py ...`.
+- The agents see 24 inputs (20 before this branch). Models trained on earlier branches can't
+  be loaded here; their CSVs still show in the dashboard.
 
 ## The dashboard
 
@@ -227,14 +276,15 @@ overfit_check.py       Each model on its training and validation data
 meta_seed_study.py     Cross-fitted vs. leaked meta-agents across seeds, agents held fixed
 agent_stability.py     Fold agents vs. final agents on the test year
 
-download_data.py       Refresh data/prices.csv
+download_data.py       Download SPY and VIX into data/spy_vix.csv
 pretrain_cnn.py        Optional CNN features (off unless you run this)
 
 env/                   TradingEnv, MetaTradingEnv, shadow books, CNN model
 regime/                HMM detector and rule-based allocators
 common/                Price loading, statistics, validation-Sharpe callback, cross-fit folds
 tests/                 Mechanical checks of the environments and the dashboard
-data/prices.csv        ^DJI daily closes, so every run uses identical data
+data/spy_vix.csv       SPY and VIX daily closes, so every run uses identical data
+data/prices.csv        ^DJI daily closes used by earlier branches
 runs/                  Results, one folder per experiment
 CHANGES.md             Why the environments and rewards look the way they do (F1–F12, R1–R7)
 ```
@@ -277,7 +327,9 @@ Most experiments only need `config.py` or a command-line flag.
 | What | Where |
 |---|---|
 | Training and test dates | `TRAIN_START`, `TRAIN_END`, `TEST_START`, `TEST_END`, or `run_all.py` flags |
-| Transaction cost | `COST_PCT`, or `--cost_pct` |
+| Asset and data file | `TICKER`, `VIX_TICKER`, `DATA_CSV`, or `--ticker`, `--data_csv` |
+| Transaction cost | `COST_PCT` (0.2 bp), or `--cost_pct` |
+| VIX inputs | `USE_VIX`, `VIX_LAG_DAYS`, or `--no_vix`, `--vix_lag` |
 | Risk ladder | `AGENT_PRESETS`: `lam_var`, `max_pos`, `dd_free`, `dd_max` per agent |
 | Meta-agent | `META_USE_CASH`, `META_REWARD`, `VOL_TARGET`, `VOL_TARGET_CAP` |
 | HMM | `N_STATES`, `HMM_EMBARGO` |
@@ -295,8 +347,14 @@ Training budget:
 
 ## Good to know
 
-- **Refreshing prices:** `python download_data.py` overwrites `data/prices.csv`. Do this
+- **Refreshing prices:** `python download_data.py` overwrites `data/spy_vix.csv`. Do this
   between experiments, not during one, because Yahoo adjusts history over time.
+- **Costs:** `COST_PCT = 0.00002`, 0.2 bp of the traded amount, about SPY's one-cent spread.
+  The `^DJI` runs used 2 bp. To test cost sensitivity, pass `--cost_pct 0.0001` (1 bp) and so
+  on to `run_all.py` or `walk_forward.py`.
+- **Dividends and cash:** SPY closes are dividend-adjusted, so Buy & Hold includes dividends.
+  Cash and the unused part of the book earn 0, and Sharpe is computed on raw returns, not
+  excess returns.
 - **Benchmarks:** judge the model against vol-targeted Buy & Hold (`vol_target_bh`) as well as
   plain Buy & Hold, because the meta-agent has a vol-target overlay of its own.
 - **One test year proves little:** the 95% interval on a one-year Sharpe spans about ±1.5. Rely

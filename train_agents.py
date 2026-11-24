@@ -12,7 +12,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 
 from env.trading_env import TradingEnv
-from common.data import load_prices
+from common.data import load_prices, vix_settings
 from common.callbacks import SharpeEvalCallback
 from config import AGENT_PRESETS
 import config
@@ -82,7 +82,7 @@ def _train_worker(args):
             "agent": agent_name, "preset": preset, "seed": seed,
             "timesteps": timesteps, "net_arch": net_arch,
             "cost_pct": cost_pct, "bars_per_year": bars_per_year,
-            "episode_bars": episode_bars,
+            "episode_bars": episode_bars, **vix_settings(),
             "reward": "quadratic_utility+dd_zones",
             "best_val_sharpe": eval_cb.best_sharpe,
         }, f, indent=2)

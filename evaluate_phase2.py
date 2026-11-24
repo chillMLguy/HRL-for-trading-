@@ -31,7 +31,7 @@ from evaluate_phase1 import run_allocator, sanity_checks, trained_cost
 from regime.hmm_regime import HMMRegimeDetector
 from regime.allocators import (EqualWeightAllocator, VolatilityRegimeAllocator,
                                HMMAllocator, AGENT_ORDER, N_AGENTS)
-from common.data import load_prices, warm_start_date, trading_start_index
+from common.data import load_prices, warm_start_date, trading_start_index, vix_settings, check_vix_settings
 import config
 
 
@@ -136,6 +136,7 @@ def main():
         with open(cfg_path) as f:
             meta_cfg = json.load(f)
 
+    check_vix_settings(meta_cfg, "meta-agent")
     # F9: cost = the cost the meta-agent was trained with, unless overridden
     cost = args.cost_pct if args.cost_pct is not None \
         else meta_cfg.get("cost_pct", trained_cost(args.modeldir))
@@ -161,6 +162,7 @@ def main():
         print(f"\n  Running {LEAKED_NAME} comparison ...")
         with open(os.path.join(os.path.dirname(leaked_path), "config.json")) as f:
             leaked_cfg = json.load(f)
+        check_vix_settings(leaked_cfg, LEAKED_NAME)
         leaked_env = meta_env_from_config(
             prices, subagents, hmm if leaked_cfg.get("use_hmm", True) else None,
             leaked_cfg, cost, ann=ann, start_index=start_idx, eval_mode=True,
@@ -288,7 +290,7 @@ def main():
     # F9: record exactly how this evaluation was run
     with open(os.path.join(args.outdir, "phase2_eval_config.json"), "w") as f:
         json.dump({"ticker": args.ticker, "test_start": args.test_start,
-                   "test_end": args.test_end, "cost_pct": cost,
+                   "test_end": args.test_end, "cost_pct": cost, **vix_settings(),
                    "meta_model": args.meta_model, "warm_bars": start_idx,
                    "meta_cfg": meta_cfg}, f, indent=2)
 

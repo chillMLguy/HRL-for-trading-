@@ -177,7 +177,8 @@ def _load_price_cache():
     if not os.path.isfile(config.DATA_CSV):
         return None
     df = pd.read_csv(config.DATA_CSV, parse_dates=["Date"], index_col="Date")
-    return df["Close"].dropna() if "Close" in df else None
+    col = config.TICKER if config.TICKER in df else "Close"
+    return df[col].dropna() if col in df else None
 
 
 def vol_regimes(returns, thresholds, prices):

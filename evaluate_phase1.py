@@ -27,7 +27,7 @@ from regime.hmm_regime import HMMRegimeDetector
 from regime.allocators import (EqualWeightAllocator,
                                VolatilityRegimeAllocator,
                                HMMAllocator, AGENT_ORDER, N_AGENTS)
-from common.data import load_prices, warm_start_date, trading_start_index
+from common.data import load_prices, warm_start_date, trading_start_index, check_vix_settings, check_vix_dir
 import config
 
 
@@ -35,12 +35,15 @@ BARS_PER_YEAR = config.BARS_PER_YEAR
 
 
 def trained_cost(modeldir, fallback=config.COST_PCT):
-    """F9: read the training cost from any Phase 0 agent config."""
+    """F9: read the training cost from any Phase 0 agent config (and check that
+    the agents were trained with the VIX settings of config.py)."""
     for name in AGENT_ORDER:
         p = os.path.join(modeldir, "models", f"{name}_agent", "config.json")
         if os.path.isfile(p):
             with open(p) as f:
-                return json.load(f).get("cost_pct", fallback)
+                cfg = json.load(f)
+            check_vix_settings(cfg, f"{name} agent")
+            return cfg.get("cost_pct", fallback)
     return fallback
 
 
@@ -199,6 +202,7 @@ def main():
         model_path = os.path.join(
             args.modeldir, "models", f"{name}_agent", "best_model")
         if os.path.isfile(model_path + ".zip"):
+            check_vix_dir(os.path.dirname(model_path), f"{name} agent")
             agents[name] = SAC.load(model_path)
             print(f"    ✓  {name}")
         else:

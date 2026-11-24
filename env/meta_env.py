@@ -30,9 +30,10 @@ cash arm else 0):
   [0:K]        HMM filtered posterior (causal)
   [K:K+3]      vol_10, vol_20, vol_60
   [K+3:K+7]    ret_5, ret_10, ret_20, ret_60
-  [K+7]        portfolio drawdown        (execution env)
-  [K+8]        current executed position (position units; can exceed 1 with lever)
-  [K+9]        current vol-target leverage (1.0 when overlay off)
+  [K+7:K+11]   vix_level, vix_rel, vix_chg, vrp   (branch spy-vix; see trading_env)
+  [K+11]       portfolio drawdown        (execution env)
+  [K+12]       current executed position (position units; can exceed 1 with lever)
+  [K+13]       current vol-target leverage (1.0 when overlay off)
   [.. +N]      sub-agent proposed positions (action × its own max_pos)
   [.. +N]      sub-agent shadow performance (trailing net return sum)
   [.. +N+C]    previous allocation weights
@@ -48,7 +49,8 @@ import gymnasium as gym
 from gymnasium import spaces
 from stable_baselines3 import SAC
 
-from env.trading_env import TradingEnv
+from env.trading_env import TradingEnv, VIX_FEATURES
+from common.data import check_vix_dir
 from env.shadow import ShadowBooks
 from regime.allocators import AGENT_ORDER, N_AGENTS
 from regime.hmm_regime import HMMRegimeDetector
@@ -72,6 +74,7 @@ def load_subagents(modeldir, agent_order=AGENT_ORDER, verbose=True):
     for name in agent_order:
         path = os.path.join(modeldir, "models", f"{name}_agent", "best_model")
         if os.path.isfile(path + ".zip"):
+            check_vix_dir(os.path.dirname(path), f"{name} agent")
             agents[name] = SAC.load(path)
             if verbose:
                 print(f"    ✓  sub-agent {name}")
@@ -189,7 +192,7 @@ class MetaTradingEnv(gym.Env):
         subagents,
         hmm_detector=None,
         ann:          int   = 252,
-        cost_pct:     float = 0.0002,
+        cost_pct:     float = CFG.COST_PCT,
         use_cash:     bool  = CFG.META_USE_CASH,
         vol_target:   float = CFG.VOL_TARGET,
         vol_target_cap: float = CFG.VOL_TARGET_CAP,
@@ -209,6 +212,7 @@ class MetaTradingEnv(gym.Env):
         proposal_stream = None,
         hmm_stream = None,
         train_episode_bars: int = 0,
+        vix=None,
     ):
         super().__init__()
 
@@ -237,7 +241,7 @@ class MetaTradingEnv(gym.Env):
             bars_per_year=ann, cost_pct=cost_pct,
             dd_free=dd_free, dd_max=dd_max, eval_mode=eval_mode,
             cnn_model_path=cnn_model_path, start_index=start_index,
-            train_episode_bars=train_episode_bars,
+            train_episode_bars=train_episode_bars, vix=vix,
         )
         self.warmup      = self._env.warmup
         self.start_index = self._env.start_index
@@ -280,7 +284,8 @@ class MetaTradingEnv(gym.Env):
 
         # Spaces
         self._n_act = N_AGENTS + (1 if self.use_cash else 0)
-        self._n_obs = self._K + 3 + 4 + 3 + N_AGENTS + N_AGENTS + self._n_act
+        self._n_obs = (self._K + 3 + 4 + len(VIX_FEATURES) + 3 + N_AGENTS + N_AGENTS
+                       + self._n_act)
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(self._n_obs,), dtype=np.float32)
         self.action_space = spaces.Box(
@@ -348,6 +353,7 @@ class MetaTradingEnv(gym.Env):
             np.array([f["vol_10"][t], f["vol_20"][t], f["vol_60"][t]]),
             np.array([f["ret_5"][t], f["ret_10"][t],
                       f["ret_20"][t], f["ret_60"][t]]),
+            np.array([f[k][t] for k in VIX_FEATURES]),
             np.array([e._current_drawdown()]),
             np.array([e.position]),
             np.array([self._lever]),

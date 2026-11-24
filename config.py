@@ -1,12 +1,35 @@
 # ── Asset & data ─────────────────────────
-TICKER   = "^DJI"
-INTERVAL = "1d"
+# Branch spy-vix: the traded asset is the SPY ETF (adjusted closes, so dividends
+# are in the returns) and the agents also see the VIX index.  The ^DJI runs of
+# earlier branches used TICKER = "^DJI" with data/prices.csv (still in data/).
+import os
 
-# Optional local price cache (CSV with Date,Close columns).  When set (or when
-# --data_csv is passed), all scripts read prices from this file instead of
-# hitting yfinance — one download, identical data for every fold/seed/rerun.
-# Create it with:  python download_data.py
-DATA_CSV = "data/prices.csv"
+TICKER     = "SPY"
+VIX_TICKER = "^VIX"
+INTERVAL   = "1d"
+
+# Local data cache: Date + one column per ticker (SPY, ^VIX).  All scripts read
+# prices and VIX from this file instead of hitting yfinance — one download,
+# identical data for every fold/seed/rerun.  Create it with:
+#     python download_data.py
+DATA_CSV = "data/spy_vix.csv"
+DOWNLOAD_START = "2005-01-01"
+
+# ── VIX inputs ───────────────────────────
+# Four VIX features are appended to every agent's observation and to the
+# meta-agent's (env/trading_env.py).  USE_VIX = False keeps the observation size
+# but fills the VIX features with zeros (the "no VIX" ablation).
+# run_all.py / walk_forward.py --no_vix and --vix_lag set the two environment
+# variables below, so every script they start sees the same setting.  To run a
+# single script on a no-VIX run:  HRL_USE_VIX=0 python evaluate_phase2.py ...
+USE_VIX        = os.environ.get("HRL_USE_VIX", "1") != "0"
+# The VIX close is set at 4:15 pm ET, 15 minutes after SPY's 4:00 pm close, so a
+# decision at SPY's close uses the VIX close of the previous day by default
+# (strictly no look-ahead).  Set 0 to use the same-day VIX close.
+VIX_LAG_DAYS   = int(os.environ.get("HRL_VIX_LAG", "1"))
+VIX_REF_LEVEL  = 20.0      # vix_level = ln(VIX / 20)
+VIX_REL_WINDOW = 252       # vix_rel   = ln(VIX / median of the previous 252 days)
+VIX_CHG_DAYS   = 5         # vix_chg   = ln(VIX / VIX 5 days earlier)
 
 # ── Train / test splits (single-split runs) ──
 TRAIN_START = "2013-01-01"
@@ -20,7 +43,11 @@ TEST_END    = "2024-12-31"
 WARM_BARS = 260
 
 # ── Execution & training ──────────────
-COST_PCT = 0.0002     # one-way transaction cost (must match train & eval — enforced)
+# One-way transaction cost per unit of position traded (must match train & eval —
+# enforced).  0.2 bp: SPY's bid-ask spread is about 1 cent on a $400-600 price
+# (~0.2 bp, so ~0.1 bp per side) plus a broker commission of a similar size.
+# The ^DJI runs used 0.0002 (2 bp).
+COST_PCT = 0.00002
 SEED     = 42
 
 # Random-start training episodes (F11): each training episode is a random

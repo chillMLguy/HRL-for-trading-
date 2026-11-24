@@ -36,7 +36,7 @@ from env.meta_env import MetaTradingEnv, load_subagents, detect_cnn_path
 from regime.hmm_regime import HMMRegimeDetector
 from regime.allocators import AGENT_ORDER
 from common.crossfit import load_stream, stream_arrays, stream_windows
-from common.data import load_prices
+from common.data import load_prices, vix_settings
 from common.callbacks import SharpeEvalCallback
 import config
 
@@ -235,7 +235,7 @@ def main():
         "ticker": args.ticker,
         "train_start": args.train_start, "train_end": args.train_end,
         "interval": args.interval, "bars_per_year": ann,
-        "cost_pct": args.cost_pct, "seed": args.seed,
+        "cost_pct": args.cost_pct, "seed": args.seed, **vix_settings(),
         "timesteps": timesteps, "net_arch": net_arch,
         "use_cash": use_cash, "vol_target": args.vol_target,
         "vol_target_cap": args.vol_target_cap,

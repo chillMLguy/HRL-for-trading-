@@ -10,6 +10,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import pandas as pd
 
+import config
+config.USE_VIX = False      # synthetic prices have no VIX; tests/test_vix.py covers it
+
 from env.trading_env import TradingEnv
 from env.shadow import ShadowBooks
 from env.meta_env import (MetaTradingEnv, DifferentialSharpe,

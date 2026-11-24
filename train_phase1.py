@@ -3,7 +3,7 @@ Phase 1 training — fits HMM on training data and saves artifacts.
 
 Usage
 -----
-  python train_phase1.py --ticker "^DJI" \
+  python train_phase1.py --ticker SPY \
       --train_start 2011-01-01 --train_end 2021-12-31 \
       --outdir . --n_states 3 --seed 42
 
@@ -24,7 +24,7 @@ import numpy as np
 from env.trading_env import AGENT_PRESETS
 from regime.hmm_regime import HMMRegimeDetector
 from regime.allocators import VolatilityRegimeAllocator, AGENT_ORDER
-from common.data import load_prices
+from common.data import load_prices, vix_settings
 import config
 
 
@@ -141,6 +141,7 @@ def main():
         "interval": args.interval,
         "bars_per_year": ann,
         "cost_pct": args.cost_pct,
+        **vix_settings(),
         "n_states": args.n_states,
         "seed": args.seed,
         "n_train_bars": len(prices),

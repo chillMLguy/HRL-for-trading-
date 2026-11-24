@@ -1,5 +1,5 @@
 """
-Observation space (20 features):
+Observation space (24 features):
 
   MARKET — Momentum:
   [0]  ret_5         — ~1-week rolling return
@@ -29,6 +29,14 @@ Observation space (20 features):
   CNN PATTERN FEATURES (optional, zeros if no CNN model):
   [17..19] cnn_feat_0..2
 
+  VIX (branch spy-vix; zeros when config.USE_VIX is False or vix=False).  VIX_t
+  is the VIX close of bar t − VIX_LAG_DAYS (default 1: the VIX close is set 15
+  minutes after SPY's, so the same-day value is not known at SPY's close):
+  [20] vix_level     — ln(VIX_t / 20), clipped [-2, 2]
+  [21] vix_rel       — ln(VIX_t / median VIX of the previous 252 bars), clipped [-2, 2]
+  [22] vix_chg       — ln(VIX_t / VIX_{t-5}), clipped [-2, 2]
+  [23] vrp           — VIX_t / 100 − vol_20 (implied minus realized vol), clipped [-1, 1]
+
 Action space: continuous [-1, 1], scaled internally by `max_pos`
   (per-agent hard exposure cap — part of the R4 risk ladder).
 
@@ -49,12 +57,15 @@ PnL uses SIMPLE returns (F4) so a full-long agent exactly replicates
 buy-and-hold; log returns remain the basis of all features.
 """
 import numpy as np
+import pandas as pd
 import gymnasium as gym
 from gymnasium import spaces
 
+import config
 from config import AGENT_PRESETS, REWARD_SCALE  # re-exported for other modules
 
-N_OBS = 20  # total observation features
+N_OBS = 24  # total observation features
+VIX_FEATURES = ("vix_level", "vix_rel", "vix_chg", "vrp")
 
 # Defaults for env-internal lookbacks. Both are scaled by the per-frequency
 # factor inside TradingEnv (×1 for daily, ×6 for 1h, etc.).
@@ -254,6 +265,61 @@ def _precompute_features(returns: np.ndarray,
     }
 
 
+def _vix_features(vix, vol_20, lag=None):
+    """
+    The four VIX features, each an array with one value per price bar (index t
+    uses VIX up to bar t − lag only).  `vix` is None (→ zeros) or one VIX close per
+    price bar.  Bars without enough history get 0; they fall in the warm-up.
+    """
+    N = len(vol_20)
+    if vix is None:
+        return {k: np.zeros(N, dtype=np.float32) for k in VIX_FEATURES}
+    lag = config.VIX_LAG_DAYS if lag is None else int(lag)
+    v = pd.Series(np.asarray(vix, dtype=np.float64))
+    if len(v) != N:
+        raise ValueError(f"vix has {len(v)} values for {N} price bars")
+    if (v.dropna() <= 0).any():
+        raise ValueError("VIX must be positive")
+    v = v.shift(lag) if lag else v
+    lv = np.log(v)
+    med = v.shift(1).rolling(config.VIX_REL_WINDOW, min_periods=20).median()
+    out = {
+        "vix_level": (lv - np.log(config.VIX_REF_LEVEL)).clip(-2.0, 2.0),
+        "vix_rel":   (lv - np.log(med)).clip(-2.0, 2.0),
+        "vix_chg":   (lv - lv.shift(config.VIX_CHG_DAYS)).clip(-2.0, 2.0),
+        "vrp":       (v / 100.0 - pd.Series(vol_20, dtype=np.float64)).clip(-1.0, 1.0),
+    }
+    return {k: np.nan_to_num(s.to_numpy(), nan=0.0).astype(np.float32)
+            for k, s in out.items()}
+
+
+def resolve_vix(prices, vix):
+    """
+    VIX closes aligned to `prices`, or None for zero VIX features.
+      vix=None   → config.USE_VIX decides; if on, VIX is looked up by the dates of
+                   `prices` (which must have a DatetimeIndex) in the cache the prices
+                   came from (load_prices tags them), else in config.DATA_CSV
+      vix=False  → None (zeros; the no-VIX ablation)
+      otherwise  → one VIX close per price bar (array or Series)
+    """
+    if vix is False:
+        return None
+    if vix is None:
+        if not getattr(config, "USE_VIX", False):
+            return None
+        idx = getattr(prices, "index", None)
+        if not isinstance(idx, pd.DatetimeIndex):
+            raise ValueError("config.USE_VIX needs prices with a DatetimeIndex to look "
+                             "VIX up by date; pass vix=<array> or vix=False instead.")
+        from common.data import load_vix
+        csv = getattr(prices, "attrs", {}).get("data_csv")
+        return load_vix(idx, data_csv=csv).to_numpy()
+    arr = np.asarray(getattr(vix, "values", vix), dtype=np.float64)
+    if len(arr) != len(prices):
+        raise ValueError(f"vix has {len(arr)} values for {len(prices)} prices")
+    return arr
+
+
 class TradingEnv(gym.Env):
     """
     Parameters
@@ -275,6 +341,9 @@ class TradingEnv(gym.Env):
     eval_mode       : if True — full path from start_index, no dd termination
     preset          : optional name from config.AGENT_PRESETS — fills
                       lam_var / max_pos / dd_free / dd_max in one go.
+    vix             : None (default: config.USE_VIX decides, VIX looked up by the
+                      dates of `prices`), False (zero VIX features), or one VIX
+                      close per price bar.  See resolve_vix.
     """
 
     metadata = {"render_modes": []}
@@ -285,7 +354,7 @@ class TradingEnv(gym.Env):
         lam_var:         float = 12.0,
         max_pos:         float = 1.0,
         bars_per_year:   int   = 252,
-        cost_pct:        float = 0.0002,
+        cost_pct:        float = config.COST_PCT,
         max_hold:        int   = DEFAULT_MAX_HOLD,
         initial_capital: float = 1.0,
         dd_free:         float = 0.03,
@@ -296,6 +365,7 @@ class TradingEnv(gym.Env):
         start_index:     int   = None,
         train_episode_bars: int = 0,
         preset:          str   = None,
+        vix=None,
     ):
         super().__init__()
 
@@ -312,6 +382,9 @@ class TradingEnv(gym.Env):
         self.simple_returns = (arr[1:] / arr[:-1] - 1.0).astype(np.float32)
         self._feat = _precompute_features(self.returns, bars_per_year,
                                           cnn_model_path)
+        vix_arr = resolve_vix(prices, vix)
+        self.vix_on = vix_arr is not None
+        self._feat.update(_vix_features(vix_arr, self._feat["vol_20"]))
 
         scale = self._feat["_scale"]
 
@@ -434,7 +507,7 @@ class TradingEnv(gym.Env):
 
     def obs_with_book(self, position, trade_start, drawdown):
         """
-        Build the 20-feature observation at the current bar with an arbitrary
+        Build the 24-feature observation at the current bar with an arbitrary
         portfolio book (F3: lets frozen sub-agents see their OWN shadow book
         instead of the blended portfolio's).
         """
@@ -463,6 +536,10 @@ class TradingEnv(gym.Env):
         obs[17] = f["cnn_feat_0"][t]
         obs[18] = f["cnn_feat_1"][t]
         obs[19] = f["cnn_feat_2"][t]
+        obs[20] = f["vix_level"][t]
+        obs[21] = f["vix_rel"][t]
+        obs[22] = f["vix_chg"][t]
+        obs[23] = f["vrp"][t]
         return obs
 
     # ── Helpers ────────────────────────────────────────────────────

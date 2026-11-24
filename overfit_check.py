@@ -30,7 +30,7 @@ import pandas as pd
 from stable_baselines3 import SAC
 
 from common.crossfit import load_stream, stream_arrays, stream_windows
-from common.data import load_prices
+from common.data import load_prices, check_vix_settings
 from common.stats import ann_sharpe
 from env.meta_env import load_subagents, meta_env_from_config
 from env.trading_env import TradingEnv
@@ -122,6 +122,7 @@ def meta_rows(name, meta_dir, rundir, prices, subagents, hmm, ann):
     with open(os.path.join(meta_path, "config.json")) as f:
         cfg = json.load(f)
     meta = SAC.load(os.path.join(meta_path, "best_model"))
+    check_vix_settings(cfg, meta_dir)
     cost = cfg.get("cost_pct", config.COST_PCT)
     mode = cfg.get("training_mode", "in_sample")
     use_hmm = hmm if cfg.get("use_hmm", True) else None
@@ -174,6 +175,7 @@ def main():
     with open(cfg_path) as f:
         cfg = json.load(f)
     ann = cfg.get("bars_per_year", 252)
+    check_vix_settings(cfg, "phase 1 run")
     cost = cfg.get("cost_pct", config.COST_PCT)
     prices = load_prices(cfg.get("ticker", config.TICKER), cfg["train_start"],
                          cfg["train_end"], cfg.get("interval", config.INTERVAL),

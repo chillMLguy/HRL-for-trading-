@@ -50,7 +50,17 @@ def main():
     p.add_argument("--cf_folds", type=int, default=config.CF_FOLDS)
     p.add_argument("--no_compare_leaked", action="store_true",
                    help="With --crossfit, skip the in-sample comparison meta-agent")
+    p.add_argument("--no_vix", action="store_true",
+                   help="Ablation: VIX inputs set to zero (same observation size)")
+    p.add_argument("--vix_lag", type=int, default=None,
+                   help=f"Days VIX lags the asset (default {config.VIX_LAG_DAYS})")
     args = p.parse_args()
+    # Every script started below reads these in config.py, so the whole run uses
+    # one VIX setting; each model's config.json records it and evaluation checks it.
+    if args.no_vix:
+        os.environ["HRL_USE_VIX"] = "0"
+    if args.vix_lag is not None:
+        os.environ["HRL_VIX_LAG"] = str(args.vix_lag)
 
     py = sys.executable
     os.makedirs(args.outdir, exist_ok=True)

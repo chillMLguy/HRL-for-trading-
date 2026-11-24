@@ -9,7 +9,7 @@ import pandas as pd
 from stable_baselines3 import SAC
 
 from env.trading_env import TradingEnv, AGENT_PRESETS
-from common.data import load_prices, warm_start_date, trading_start_index
+from common.data import load_prices, warm_start_date, trading_start_index, check_vix_settings
 from common.stats import sharpe, max_drawdown, cvar_metric, compute_metrics
 import config
 
@@ -191,7 +191,9 @@ def main():
             cost = config.COST_PCT
             if os.path.isfile(cfg_path):
                 with open(cfg_path) as f:
-                    cost = json.load(f).get("cost_pct", cost)
+                    acfg = json.load(f)
+                check_vix_settings(acfg, f"{name} agent")
+                cost = acfg.get("cost_pct", cost)
         print(f"  Rolling out: {name} (cost {cost*1e4:.1f} bp)...")
         model = SAC.load(path)
         results[name] = rollout(model, prices, name, ann, cost,

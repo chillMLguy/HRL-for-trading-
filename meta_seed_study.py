@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 from stable_baselines3 import SAC
 
-from common.data import load_prices, warm_start_date, trading_start_index
+from common.data import load_prices, warm_start_date, trading_start_index, check_vix_settings
 from common.stats import ann_sharpe
 from env.meta_env import load_subagents, meta_env_from_config
 from regime.hmm_regime import HMMRegimeDetector
@@ -36,6 +36,7 @@ def score(meta_path, warm, first, subagents, hmm, ann):
     """Test Sharpe and exposure of the meta-agent saved in meta_path."""
     with open(os.path.join(meta_path, "config.json")) as f:
         cfg = json.load(f)
+    check_vix_settings(cfg, meta_path)
     meta = SAC.load(os.path.join(meta_path, "best_model"))
     env = meta_env_from_config(warm, subagents, hmm if cfg.get("use_hmm", True) else None,
                                cfg, cfg["cost_pct"], ann=ann, start_index=first,
