@@ -1,0 +1,23 @@
+{
+  "agent": "balanced",
+  "preset": {
+    "lam_var": 12.0,
+    "max_pos": 0.6,
+    "dd_free": 0.03,
+    "dd_max": 0.12
+  },
+  "seed": 2043,
+  "timesteps": 200000,
+  "net_arch": [
+    128,
+    128
+  ],
+  "cost_pct": 2e-05,
+  "bars_per_year": 252,
+  "episode_bars": 504,
+  "use_vix": true,
+  "vix_lag_days": 1,
+  "vix_ticker": "^VIX",
+  "reward": "quadratic_utility+dd_zones",
+  "best_val_sharpe": 0.05747698627058805
+}
