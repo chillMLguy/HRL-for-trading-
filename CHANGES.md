@@ -148,3 +148,25 @@ are included.
 
 Checks: `tests/test_vix.py`. Models from earlier branches have 20 agent inputs and can't be
 loaded on this branch; their CSVs still show in the dashboard.
+
+## Smaller networks, weight decay, training from 1993 (branch `spy-vix`)
+
+The ^DJI runs showed the agents memorising their training years: 500k steps on a
+`[256, 256]` network reached training Sharpe 5–9 and test Sharpe below 0, while 50k steps on
+`[64, 64]` generalised better. The training budget and the network size were tied together in
+the `--quick`/default/`--full` presets, so the two effects could not be separated.
+
+| ID | Change | Where |
+|----|--------|-------|
+| R19 | **Network size, weight decay and training length are separate settings.** Defaults: `[32, 32]` for the agents and the meta-agent; AdamW with weight decay 0.01 on the actor and both critics; training length of 15 passes over the training days (steps = passes × training bars). `--net_arch`, `--meta_net_arch`, `--weight_decay`, `--passes0/2` and `--steps0/2` on `run_all.py` and `walk_forward.py`; `--quick` is now a 3-pass pipeline check and `--full` is gone. Every `config.json` records the network, weight decay, steps, training bars and passes, and the dashboard shows them. | `common/training.py`, `config.py`, all training scripts, `dashboard.py` |
+| R20 | **The seed study copies the run's own meta-agent settings** (network, weight decay, steps) instead of relying on the same budget flag being repeated, and checks the VIX settings before training. | `meta_seed_study.py` |
+| D3 | **Training from February 1993**, SPY's whole history, instead of 2013. The window gains the 2000–02 and 2007–09 bear markets. Walk-forward folds now expand from 1993 by default (`--train_years N` slides). `load_prices` refuses a data file that starts more than a month after the requested start. | `config.py`, `download_data.py`, `walk_forward.py`, `common/data.py` |
+
+With the default window the agents see about 6,200 training days (93k steps at 15 passes)
+and the cross-fitted meta-agent about 2,900 (44k steps), against 200k and 150k steps before.
+
+Weight decay is decoupled (AdamW), so 0.01 shrinks a weight with no gradient by about
+lr × 0.01 = 3e-6 per step, roughly 25% over 93k steps. As plain L2 inside Adam, a value like
+1e-4 would have had an unpredictable effect, and as AdamW decay it would do almost nothing.
+
+Checks: `tests/test_training.py`.

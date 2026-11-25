@@ -32,6 +32,14 @@ def load_prices(ticker, start, end, interval="1d", data_csv=None,
             raise ValueError(f"{csv} has no column for {ticker} (cols: "
                              f"{list(df.columns)})")
         s = df[col].dropna()
+        # A cache that starts years after `start` would silently shorten the
+        # training window while config.json still records `start`.
+        if len(s) and s.index[0] > pd.Timestamp(start) + pd.Timedelta(days=31):
+            raise ValueError(
+                f"{csv} starts on {s.index[0].date()}, but bars from {start} were "
+                f"asked for. Download the longer history first "
+                f"(python download_data.py --start 1993-01-01), or pass a start "
+                f"date on or after {s.index[0].date()}.")
         s = s.loc[(s.index >= pd.Timestamp(start)) &
                   (s.index < pd.Timestamp(end))]
         if verbose:

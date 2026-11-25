@@ -4,7 +4,8 @@ R7 — walk-forward protocol: rolling annual folds × multiple seeds.
 For each test year Y in config.WF_TEST_YEARS and each seed S in
 config.WF_SEEDS:
 
-    train window : [Y − WF_TRAIN_YEARS, Y − 1]   (sliding, not expanding)
+    train window : [WF_TRAIN_START, Y − 1]        (expanding, the default)
+                   [Y − N, Y − 1] with --train_years N (sliding)
     test window  : year Y  (traded in full thanks to warm windows, F8)
     output dir   : <outroot>/fold<Y>/seed<S>/
 
@@ -17,10 +18,12 @@ Afterwards:   python aggregate_results.py --root <outroot>
 
 Example (full sweep):
     python download_data.py
-    python walk_forward.py --outroot runs/wf --steps0 200000 --steps2 150000
-Quick sanity sweep:
-    python walk_forward.py --outroot runs/wf_quick --steps0 30000 \
-        --steps2 30000 --years 2022 2024 --seeds 0
+    python walk_forward.py --outroot runs/wf --crossfit
+Pipeline check (3 passes, mechanics only):
+    python walk_forward.py --outroot runs/wf_check --quick --years 2022 2024 --seeds 0
+
+Network size, weight decay and training length take the same flags as run_all.py
+(--net_arch, --meta_net_arch, --weight_decay, --passes0/2, --steps0/2, --quick).
 """
 import argparse
 import os
@@ -29,6 +32,7 @@ import sys
 import time
 
 import config
+from common.training import forward_args, parse_net_arch
 
 
 def sh(cmd):
@@ -45,11 +49,24 @@ def main():
     p.add_argument("--years",   type=int, nargs="+",
                    default=config.WF_TEST_YEARS)
     p.add_argument("--seeds",   type=int, nargs="+", default=config.WF_SEEDS)
-    p.add_argument("--train_years", type=int, default=config.WF_TRAIN_YEARS)
-    p.add_argument("--steps0",  type=int, default=200_000,
-                   help="Phase 0 timesteps per agent")
-    p.add_argument("--steps2",  type=int, default=150_000,
-                   help="Phase 2 timesteps")
+    p.add_argument("--train_start", default=config.WF_TRAIN_START,
+                   help="Start of every fold's (expanding) training window")
+    p.add_argument("--train_years", type=int, default=config.WF_TRAIN_YEARS,
+                   help="N > 0: slide, training on the N years before each test "
+                        "year instead (0 = expanding from --train_start)")
+    p.add_argument("--net_arch", type=parse_net_arch, default=config.AGENT_NET_ARCH,
+                   help="Agents' hidden layers, e.g. 32,32, or 'linear'")
+    p.add_argument("--meta_net_arch", type=parse_net_arch,
+                   default=config.META_NET_ARCH, help="Meta-agent's hidden layers")
+    p.add_argument("--weight_decay", type=float, default=config.WEIGHT_DECAY)
+    p.add_argument("--passes0", type=float, default=config.AGENT_PASSES,
+                   help="Agent steps = passes × agent training bars")
+    p.add_argument("--passes2", type=float, default=config.META_PASSES,
+                   help="Meta steps = passes × meta training bars")
+    p.add_argument("--steps0", type=int, default=0, help="Fixed agent steps")
+    p.add_argument("--steps2", type=int, default=0, help="Fixed meta steps")
+    p.add_argument("--quick", action="store_true",
+                   help=f"{config.QUICK_PASSES} passes: a pipeline check, not a result")
     p.add_argument("--workers", type=int, default=3,
                    help="Parallel Phase 0 agent trainings per cell")
     p.add_argument("--cost_pct", type=float, default=config.COST_PCT)
@@ -80,6 +97,13 @@ def main():
     if args.vix_lag is not None:
         os.environ["HRL_VIX_LAG"] = str(args.vix_lag)
 
+    size0 = forward_args(argparse.Namespace(
+        net_arch=args.net_arch, weight_decay=args.weight_decay, passes=args.passes0,
+        steps=args.steps0, quick=args.quick))
+    size2 = forward_args(argparse.Namespace(
+        net_arch=args.meta_net_arch, weight_decay=args.weight_decay,
+        passes=args.passes2, steps=args.steps2, quick=args.quick))
+
     py = sys.executable
     t_start = time.time()
     cells = [(y, s) for y in args.years for s in args.seeds]
@@ -93,7 +117,8 @@ def main():
             print(f"[{k}/{len(cells)}] fold{year}/seed{seed} — done, skip")
             continue
 
-        tr_start = f"{year - args.train_years}-01-01"
+        tr_start = (f"{year - args.train_years}-01-01" if args.train_years > 0
+                    else args.train_start)
         tr_end   = f"{year - 1}-12-31"
         te_start = f"{year}-01-01"
         te_end   = f"{year}-12-31"
@@ -103,9 +128,9 @@ def main():
         base = ["--data_csv", args.data_csv, "--ticker", args.ticker]
 
         sh([py, "train_agents.py", "--start", tr_start, "--end", tr_end,
-            "--outdir", d, "--seed", str(seed), "--steps", str(args.steps0),
+            "--outdir", d, "--seed", str(seed),
             "--workers", str(args.workers), "--cost_pct", str(args.cost_pct),
-            "--no_cnn"] + base)
+            "--no_cnn"] + size0 + base)
 
         sh([py, "train_phase1.py", "--train_start", tr_start,
             "--train_end", tr_end, "--outdir", d, "--seed", str(seed)]
@@ -114,16 +139,16 @@ def main():
         if args.crossfit:
             sh([py, "train_crossfit.py", "--train_start", tr_start,
                 "--train_end", tr_end, "--outdir", d, "--seed", str(seed),
-                "--steps", str(args.steps0), "--workers", str(args.workers),
+                "--workers", str(args.workers),
                 "--cost_pct", str(args.cost_pct), "--folds", str(args.cf_folds)]
-               + base)
+               + size0 + base)
 
         p2 = [py, "train_phase2.py", "--train_start", tr_start,
               "--train_end", tr_end, "--modeldir", d, "--outdir", d,
-              "--seed", str(seed), "--steps", str(args.steps2),
+              "--seed", str(seed),
               "--cost_pct", str(args.cost_pct), "--no_cnn",
               "--vol_target", str(args.vol_target),
-              "--meta_reward", args.meta_reward] + base
+              "--meta_reward", args.meta_reward] + size2 + base
         if args.no_cash:
             p2.append("--no_cash")
         if args.no_hmm:

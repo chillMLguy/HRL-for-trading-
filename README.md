@@ -64,8 +64,10 @@ pip install -r requirements.txt
 python download_data.py
 ```
 
-This writes `data/spy_vix.csv` with columns `Date`, `SPY` and `^VIX` from 2005 on, in one
-Yahoo request. Commit and push it, so every machine and every rerun uses the same data:
+This writes `data/spy_vix.csv` with columns `Date`, `SPY` and `^VIX` from 1993 on (SPY's
+first trading day was 29 January 1993), in one Yahoo request. The default training window
+starts on 1 February 1993, so a file that starts later is refused rather than silently
+shortening the window. Commit and push it, so every machine and every rerun uses the same data:
 
 ```bash
 git add data/spy_vix.csv
@@ -83,9 +85,10 @@ python tests/test_envs.py
 python tests/test_crossfit.py
 python tests/test_dashboard.py
 python tests/test_vix.py
+python tests/test_training.py
 ```
 
-Every line should start with `✓`. These take under a minute and need no training.
+Every line should start with `✓`. These take a minute or two and need no real training.
 
 ### 5. Look at the existing results
 
@@ -99,56 +102,57 @@ in the repo are `^DJI` runs from earlier branches.
 
 ### 6. Run the pipeline end to end
 
-Run this once on a new machine to confirm that training works. It trains all three phases
-with a small budget, then evaluates them on 2024. Results go to `runs/latest/`, which git
-ignores.
+Run this once on a new machine to confirm that training works. `--quick` trains every
+model for only 3 passes over its training days, then evaluates on 2024. It checks the
+mechanics; its numbers are not results. Output goes to `runs/latest/`.
 
 ```bash
 export OMP_NUM_THREADS=1
 python run_all.py --quick
-python dashboard.py
+python dashboard.py --runs runs/latest
 ```
 
-This took about 15 minutes on a 2-core machine. Keep `OMP_NUM_THREADS=1` for all training: on
-that machine a small walk-forward cell ran more than 5 times faster than with the default
-threading.
+Keep `OMP_NUM_THREADS=1` for all training: on a 2-core machine a small walk-forward cell ran
+more than 5 times faster than with the default threading.
 
 Prices and VIX come from `data/spy_vix.csv` (step 3).
 
 ### 7. Run a full experiment
 
-One split, with the defaults from `config.py` (train 2013–2023, test 2024):
+One split, with the defaults from `config.py` (train February 1993 to 2023, test 2024):
 
 ```bash
-python run_all.py --outdir runs/split2024 --full
+python run_all.py --outdir runs/split2024 --crossfit
 ```
 
 To use other dates:
 
 ```bash
-python run_all.py --outdir runs/split2022 --full \
-    --train_start 2011-01-01 --train_end 2021-12-31 \
-    --test_start 2022-01-01 --test_end 2022-12-31
+python run_all.py --outdir runs/split2022 --crossfit \
+    --train_end 2021-12-31 --test_start 2022-01-01 --test_end 2022-12-31
 ```
+
+See [Network size and training length](#network-size-and-training-length) for the defaults
+and how to change them.
 
 ### 8. Run the walk-forward experiment
 
 This is the experiment the thesis conclusions should rest on: every test year in
-`config.WF_TEST_YEARS`, each trained on the previous 8 years, for each seed in
-`config.WF_SEEDS`.
+`config.WF_TEST_YEARS`, for each seed in `config.WF_SEEDS`. Each fold trains on everything
+from February 1993 to the end of the year before its test year (an expanding window).
+`--train_years 8` slides instead, training on the 8 years before each test year.
 
 ```bash
-python walk_forward.py --outroot runs/wf --steps0 200000 --steps2 150000
+python walk_forward.py --outroot runs/wf --crossfit
 python aggregate_results.py --root runs/wf
-python dashboard.py
+python dashboard.py --runs runs/wf
 ```
 
 A finished fold and seed is skipped when you rerun, so you can stop and resume at any time.
 Try a small grid first:
 
 ```bash
-python walk_forward.py --outroot runs/wf_try --years 2022 2024 --seeds 0 \
-    --steps0 30000 --steps2 30000
+python walk_forward.py --outroot runs/wf_try --crossfit --years 2022 2024 --seeds 0
 ```
 
 The dashboard pools each walk-forward folder into one entry in its run selector.
@@ -160,12 +164,13 @@ performing far better than they will on new data. With `--crossfit` it learns on
 agents do on data they haven't seen:
 
 ```bash
-python run_all.py --outdir runs/crossfit_2024 --crossfit --quick
-python walk_forward.py --outroot runs/wf_crossfit --crossfit --steps0 50000 --steps2 40000
+python run_all.py --outdir runs/crossfit_2024 --crossfit
+python walk_forward.py --outroot runs/wf_crossfit --crossfit
 ```
 
-This retrains the agents and HMM once per fold (`config.CF_FOLDS`, 4 by default), so Phase 0
-takes about five times as long. It took about an hour with `--quick` on a 2-core machine.
+This retrains the agents and HMM once per fold (`config.CF_FOLDS`, 4 by default). The fold
+agents use the same network and passes as the final agents, on shorter windows, so Phase 0
+takes about three times as long.
 
 Each run also trains a second meta-agent on the same dates, budget and seed using the final
 agents' in-sample behaviour. It is evaluated on the same test path as `meta_rl_leaked`, so
@@ -173,11 +178,15 @@ the dashboard's paired test measures the effect of the leak directly. Skip it wi
 `--no_compare_leaked`.
 
 One seed can decide that comparison, so retrain only the meta-agents across seeds, with the
-agents held fixed. Use the same budget flag as the run:
+agents held fixed. Each new meta-agent copies the network, weight decay and steps of the
+run's own meta-agent, so only the seed differs:
 
 ```bash
-python meta_seed_study.py --rundir runs/crossfit_2024 --quick --seeds 0 1 2 3
+python meta_seed_study.py --rundir runs/crossfit_2024 --seeds 0 1 2 3
 ```
+
+Its results are printed and saved in `<rundir>/meta_seed_study.csv`; the dashboard does not
+show them.
 
 Cross-fitting assumes retrained agents behave like the final ones. To check that on the run's
 test year:
@@ -336,14 +345,31 @@ Most experiments only need `config.py` or a command-line flag.
 | Walk-forward grid | `WF_TEST_YEARS`, `WF_TRAIN_YEARS`, `WF_SEEDS` |
 | Cross-fitting | `CF_FOLDS`, `CF_MIN_TRAIN_FRAC`, `META_TRAIN_EPISODE_BARS` |
 
-Training budget:
+## Network size and training length
 
-| Flag | Agent steps | Meta-agent steps | Network |
+A few thousand training days can't support large networks. On ^DJI, 500k steps with a
+`[256, 256]` network reached a training Sharpe of 5 to 9 and a test Sharpe below 0. The
+defaults are therefore small networks, weight decay, and a training length counted in
+passes over the training days:
+
+| Setting | Default | `config.py` | `run_all.py` / `walk_forward.py` flag |
 |---|---|---|---|
-| `--quick` | 50,000 | 40,000 | `[64, 64]` |
-| no flag | 200,000 | 150,000 | `[128, 128]` |
-| `--full` | 500,000 | 300,000 | `[256, 256]` |
-| `--steps0 N --steps2 M` | N | M | `[128, 128]` |
+| Agents' hidden layers | `[32, 32]` | `AGENT_NET_ARCH` | `--net_arch 32,32` (or `linear`) |
+| Meta-agent's hidden layers | `[32, 32]` | `META_NET_ARCH` | `--meta_net_arch 32,32` |
+| Weight decay (AdamW, actor and critics) | 0.01 | `WEIGHT_DECAY` | `--weight_decay 0.01` (0 = plain Adam) |
+| Agent training length | 15 passes | `AGENT_PASSES` | `--passes0 15`, or `--steps0 N` for fixed steps |
+| Meta-agent training length | 15 passes | `META_PASSES` | `--passes2 15`, or `--steps2 N` |
+| Pipeline check | 3 passes | `QUICK_PASSES` | `--quick` |
+
+Steps = passes × training bars, so a longer window gets proportionally more steps and every
+day is still seen about 15 times. With the default window the agents train on about 6,200
+days (93k steps) and the cross-fitted meta-agent on about 2,900 (44k steps). The individual
+scripts take the same settings as `--net_arch`, `--weight_decay`, `--passes` and `--steps`.
+
+Every model's `config.json` records `net_arch`, `weight_decay`, `timesteps`, `train_bars` and
+`passes`, and the dashboard's Run details show them. To reproduce a run from before these
+defaults, for example `split2024`: `--net_arch 256,256 --meta_net_arch 256,256
+--weight_decay 0 --steps0 500000 --steps2 300000`.
 
 ## Good to know
 
@@ -364,8 +390,8 @@ Training budget:
   window only, or the features leak test data:
 
   ```bash
-  python pretrain_cnn.py --outdir runs/mycnn --start 2013-01-01 --end 2023-12-31
-  python run_all.py --outdir runs/mycnn --full
+  python pretrain_cnn.py --outdir runs/mycnn --start 1993-02-01 --end 2023-12-31
+  python run_all.py --outdir runs/mycnn
   ```
 
 - **Inspecting training:** `tensorboard --logdir runs/split2024/logs`.

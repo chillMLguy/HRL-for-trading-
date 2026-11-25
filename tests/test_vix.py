@@ -64,7 +64,7 @@ check("VIX on the asset's calendar, forward-filled over its gaps",
 check("a gap takes the last known VIX, not a later one",
       v.iloc[100] == vix.iloc[99] and v.iloc[101] == vix.iloc[99])
 check("prices themselves are never filled (load_prices reads SPY as stored)",
-      load_prices("SPY", "2000-01-01", "2100-01-01", verbose=False).index.equals(dates))
+      load_prices("SPY", "2012-01-01", "2100-01-01", verbose=False).index.equals(dates))
 early = pd.bdate_range("2011-06-01", periods=5)
 check("no VIX on or before the first date is an error, never zero",
       raises(lambda: load_vix(early), ValueError))
@@ -142,7 +142,7 @@ other = os.path.join(tmp, "other.csv")
 vix_other = vix * 1.5
 pd.DataFrame({"SPY": prices, "^VIX": vix_other}).rename_axis("Date").reset_index() \
     .to_csv(other, index=False)
-p_other = load_prices("SPY", "2000-01-01", "2100-01-01", data_csv=other, verbose=False)
+p_other = load_prices("SPY", "2012-01-01", "2100-01-01", data_csv=other, verbose=False)
 e_other = TradingEnv(p_other.iloc[50:], eval_mode=True)
 check("VIX comes from the same file as the prices (--data_csv), even after slicing",
       np.array_equal(e_other._feat["vix_level"],

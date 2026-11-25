@@ -13,6 +13,8 @@ from stable_baselines3.common.monitor import Monitor
 
 from env.trading_env import TradingEnv
 from common.data import load_prices, vix_settings
+from common.training import (add_training_args, arch_label, sac_policy_kwargs,
+                             training_settings, training_steps)
 from common.callbacks import SharpeEvalCallback
 from config import AGENT_PRESETS
 import config
@@ -30,7 +32,7 @@ def _train_worker(args):
     """Top-level function (required for multiprocessing pickle)."""
     (agent_name, train_prices, eval_prices,
      outdir, seed, timesteps, net_arch, bars_per_year, cost_pct,
-     cnn_model_path, episode_bars) = args
+     cnn_model_path, episode_bars, weight_decay, budget) = args
 
     warnings.filterwarnings("ignore")
 
@@ -65,7 +67,7 @@ def _train_worker(args):
         gamma=0.99,
         tau=0.005,
         ent_coef="auto",
-        policy_kwargs=dict(net_arch=net_arch),
+        policy_kwargs=sac_policy_kwargs(net_arch, weight_decay),
         tensorboard_log=log_dir,
         seed=seed,
         verbose=0,
@@ -80,7 +82,8 @@ def _train_worker(args):
     with open(os.path.join(model_dir, "config.json"), "w") as f:
         json.dump({
             "agent": agent_name, "preset": preset, "seed": seed,
-            "timesteps": timesteps, "net_arch": net_arch,
+            **training_settings(net_arch, weight_decay, timesteps,
+                                len(train_prices), budget),
             "cost_pct": cost_pct, "bars_per_year": bars_per_year,
             "episode_bars": episode_bars, **vix_settings(),
             "reward": "quadratic_utility+dd_zones",
@@ -101,12 +104,7 @@ def main():
                         choices=list(BARS_PER_YEAR.keys()))
     parser.add_argument("--outdir",  default=".")
     parser.add_argument("--seed",    default=config.SEED, type=int)
-    parser.add_argument("--quick",   action="store_true",
-                        help="50k steps, [64,64] net")
-    parser.add_argument("--full",    action="store_true",
-                        help="500k steps, [256,256] net")
-    parser.add_argument("--steps",   default=0, type=int,
-                        help="Explicit timestep override (walk-forward use)")
+    add_training_args(parser, config.AGENT_NET_ARCH, config.AGENT_PASSES)
     parser.add_argument("--workers", default=3, type=int)
     parser.add_argument("--agents", default=None, nargs="+",
                         choices=list(AGENT_PRESETS.keys()))
@@ -120,23 +118,7 @@ def main():
                         help="Local price cache CSV (see download_data.py)")
     args = parser.parse_args()
 
-    if args.steps > 0:
-        timesteps = args.steps
-        net_arch  = [128, 128]
-        print(f"  Mode: CUSTOM ({timesteps:,} steps, [128,128] net)")
-    elif args.quick:
-        timesteps = 50_000
-        net_arch  = [64, 64]
-        print("  Mode: QUICK (50k steps, [64,64] net)")
-    elif args.full:
-        timesteps = 500_000
-        net_arch  = [256, 256]
-        print("  Mode: FULL (500k steps, [256,256] net)")
-    else:
-        timesteps = 200_000
-        net_arch  = [128, 128]
-        print("  Mode: NORMAL (200k steps, [128,128] net)")
-
+    net_arch = args.net_arch
     bars_per_year = BARS_PER_YEAR[args.interval]
 
     cnn_model_path = None
@@ -151,24 +133,29 @@ def main():
 
     selected = args.agents if args.agents else list(AGENT_PRESETS.keys())
 
+    prices = load_prices(args.ticker, args.start, args.end, args.interval,
+                         data_csv=args.data_csv)
+    train_prices, eval_prices = train_split(prices)
+    timesteps, budget = training_steps(len(train_prices), args.passes, args.steps,
+                                       args.quick)
+
     print(f"\n=== Phase 0: Risk-ladder agents (R4) ===")
     print(f"  Ticker   : {args.ticker}   {args.start} → {args.end}")
-    print(f"  Cost/side: {args.cost_pct*100:.3f}%   Steps: {timesteps:,}"
-          f"   Episode bars: {args.episode_bars or 'full path'}")
+    print(f"  Train: {len(train_prices)} bars | Val: {len(eval_prices)} bars")
+    print(f"  Network  : {arch_label(net_arch)}   weight decay {args.weight_decay:g}   "
+          f"steps {timesteps:,} ({budget})")
+    print(f"  Cost/side: {args.cost_pct*100:.4f}%   "
+          f"Episode bars: {args.episode_bars or 'full path'}")
     for name in selected:
         p = AGENT_PRESETS[name]
         print(f"    {name:14s} lam_var={p['lam_var']:<6} "
               f"max_pos={p['max_pos']:<4} dd_max={p['dd_max']}")
-
-    prices = load_prices(args.ticker, args.start, args.end, args.interval,
-                         data_csv=args.data_csv)
-    train_prices, eval_prices = train_split(prices)
-    print(f"  Train: {len(train_prices)} bars | Val: {len(eval_prices)} bars\n")
+    print()
 
     worker_args = [
         (name, train_prices, eval_prices,
          args.outdir, args.seed + i, timesteps, net_arch, bars_per_year,
-         args.cost_pct, cnn_model_path, args.episode_bars)
+         args.cost_pct, cnn_model_path, args.episode_bars, args.weight_decay, budget)
         for i, name in enumerate(selected)
     ]
 

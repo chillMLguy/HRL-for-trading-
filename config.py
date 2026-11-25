@@ -13,7 +13,7 @@ INTERVAL   = "1d"
 # identical data for every fold/seed/rerun.  Create it with:
 #     python download_data.py
 DATA_CSV = "data/spy_vix.csv"
-DOWNLOAD_START = "2005-01-01"
+DOWNLOAD_START = "1993-01-01"   # SPY starts trading on 29 Jan 1993, VIX in 1990
 
 # ── VIX inputs ───────────────────────────
 # Four VIX features are appended to every agent's observation and to the
@@ -32,7 +32,9 @@ VIX_REL_WINDOW = 252       # vix_rel   = ln(VIX / median of the previous 252 day
 VIX_CHG_DAYS   = 5         # vix_chg   = ln(VIX / VIX 5 days earlier)
 
 # ── Train / test splits (single-split runs) ──
-TRAIN_START = "2013-01-01"
+# The whole SPY history: 1993–2023 holds the 2000–02 and 2007–09 bear markets,
+# 2020 and 2022, against none of the first two in a 2013 start.
+TRAIN_START = "1993-02-01"
 TRAIN_END   = "2023-12-31"
 TEST_START  = "2024-01-01"
 TEST_END    = "2024-12-31"
@@ -53,6 +55,20 @@ SEED     = 42
 # Random-start training episodes (F11): each training episode is a random
 # window of this many bars (0 = full-path episodes, old behaviour).
 TRAIN_EPISODE_BARS = 504          # ~2 trading years
+
+# ── Network size, weight decay, training length (R19) ─────────────
+# A few thousand training days cannot support large networks: 500k steps on a
+# [256,256] net reached training Sharpe 5–9 and test Sharpe below 0 (^DJI runs).
+# Defaults: small networks, decoupled weight decay (AdamW) on the actor and the
+# critics, and a training length counted in passes over the training days, so a
+# longer window gets proportionally more steps but the same exposure per day.
+AGENT_NET_ARCH = [32, 32]  # hidden layers of the agents' actor and critics ([] = linear)
+META_NET_ARCH  = [32, 32]  # same for the meta-agent
+WEIGHT_DECAY   = 0.01      # AdamW weight decay (0 = plain Adam, the old behaviour)
+AGENT_PASSES   = 15        # agent steps = passes × agent training bars
+META_PASSES    = 15        # meta steps  = passes × meta training bars
+QUICK_PASSES   = 3         # --quick: a fast check that the pipeline runs
+MIN_STEPS      = 5_000     # floor for very short windows
 
 # ── Sub-agent risk ladder (F5/R4) ────────
 # Reward:  r = REWARD_SCALE·(net_ret − ½·lam_var·net_ret²) − dd_penalty
@@ -93,7 +109,10 @@ HMM_VAL_FRAC = 0.05   # last X% of (training − embargo) is the
 
 # ── Walk-forward protocol (R7) ───────────
 WF_TEST_YEARS  = [2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
-WF_TRAIN_YEARS = 8      # each fold trains on the 8 years before its test year
+# 0 = expanding: every fold trains from WF_TRAIN_START to the year before its test
+# year.  N > 0 = sliding: the N years before the test year.
+WF_TRAIN_YEARS = 0
+WF_TRAIN_START = TRAIN_START
 WF_SEEDS       = [0, 1, 2]
 
 # ── Annualization ───────────────

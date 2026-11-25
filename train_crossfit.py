@@ -28,6 +28,7 @@ from stable_baselines3 import SAC
 
 from common.crossfit import fold_edges, stream_path
 from common.data import load_prices, vix_settings, check_vix_dir
+from common.training import add_training_args, forward_args
 from env.trading_env import TradingEnv
 from regime.allocators import AGENT_ORDER
 from regime.hmm_regime import HMMRegimeDetector
@@ -88,9 +89,9 @@ def main():
     p.add_argument("--seed",        type=int, default=config.SEED)
     p.add_argument("--cost_pct",    type=float, default=config.COST_PCT)
     p.add_argument("--workers",     type=int, default=3)
-    p.add_argument("--quick", action="store_true")
-    p.add_argument("--full",  action="store_true")
-    p.add_argument("--steps", type=int, default=0)
+    # The fold agents are trained like the final agents: same network, weight
+    # decay and passes, so a shorter fold window gets proportionally fewer steps.
+    add_training_args(p, config.AGENT_NET_ARCH, config.AGENT_PASSES)
     p.add_argument("--data_csv", default=config.DATA_CSV)
     args = p.parse_args()
 
@@ -108,8 +109,7 @@ def main():
     os.makedirs(root, exist_ok=True)
 
     py = sys.executable
-    size = (["--quick"] if args.quick else []) + (["--full"] if args.full else []) \
-        + (["--steps", str(args.steps)] if args.steps else [])
+    size = forward_args(args)
     base = ["--ticker", args.ticker, "--interval", args.interval,
             "--data_csv", args.data_csv]
 
@@ -148,6 +148,8 @@ def main():
         json.dump({"folds": args.folds, "min_train_frac": args.min_train_frac,
                    "train_start": args.train_start, "train_end": args.train_end,
                    "cost_pct": args.cost_pct, "seed": args.seed, **vix_settings(),
+                   "net_arch": args.net_arch, "weight_decay": args.weight_decay,
+                   "passes": args.passes, "steps": args.steps, "quick": args.quick,
                    "agent_order": AGENT_ORDER, "blocks": blocks}, f, indent=2)
     print(f"\n✓ Proposal stream → {stream_path(args.outdir)} "
           f"({sum(len(x) for x in parts)} bars)")

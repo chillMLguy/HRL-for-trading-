@@ -3,9 +3,15 @@ F9 — one command regenerates a full single-split run (phase 0 → 1 → 2 → 
 from one set of arguments, so every CSV/model in an outdir comes from the SAME
 configuration.
 
-    python run_all.py --outdir runs/split2024 \
-        --train_start 2013-01-01 --train_end 2023-12-31 \
-        --test_start 2024-01-01 --test_end 2024-12-31 --full
+    python run_all.py --outdir runs/split2024 --crossfit \
+        --train_start 1993-02-01 --train_end 2023-12-31 \
+        --test_start 2024-01-01 --test_end 2024-12-31
+
+Network size, weight decay and training length (R19), defaults in config.py:
+    --net_arch 32,32  --meta_net_arch 32,32  --weight_decay 0.01
+    --passes0 15  --passes2 15        steps = passes × training bars
+    --steps0 N / --steps2 N           fixed steps instead of passes
+    --quick                           3 passes: checks that the pipeline runs
 
 With --crossfit the meta-agent trains only on out-of-sample agent behaviour, and a
 second meta-agent trained on the same dates with in-sample behaviour is evaluated
@@ -17,6 +23,7 @@ import subprocess
 import sys
 
 import config
+from common.training import forward_args, parse_net_arch
 
 
 def sh(cmd):
@@ -36,10 +43,19 @@ def main():
     p.add_argument("--test_end",    default=config.TEST_END)
     p.add_argument("--seed",        type=int, default=config.SEED)
     p.add_argument("--cost_pct",    type=float, default=config.COST_PCT)
-    p.add_argument("--quick", action="store_true")
-    p.add_argument("--full",  action="store_true")
-    p.add_argument("--steps0", type=int, default=0)
-    p.add_argument("--steps2", type=int, default=0)
+    p.add_argument("--net_arch", type=parse_net_arch, default=config.AGENT_NET_ARCH,
+                   help="Agents' hidden layers, e.g. 32,32, or 'linear'")
+    p.add_argument("--meta_net_arch", type=parse_net_arch,
+                   default=config.META_NET_ARCH, help="Meta-agent's hidden layers")
+    p.add_argument("--weight_decay", type=float, default=config.WEIGHT_DECAY)
+    p.add_argument("--passes0", type=float, default=config.AGENT_PASSES,
+                   help="Agent steps = passes × agent training bars")
+    p.add_argument("--passes2", type=float, default=config.META_PASSES,
+                   help="Meta steps = passes × meta training bars")
+    p.add_argument("--steps0", type=int, default=0, help="Fixed agent steps")
+    p.add_argument("--steps2", type=int, default=0, help="Fixed meta steps")
+    p.add_argument("--quick", action="store_true",
+                   help=f"{config.QUICK_PASSES} passes: a pipeline check, not a result")
     p.add_argument("--no_cash", action="store_true")
     p.add_argument("--no_hmm",  action="store_true")
     p.add_argument("--vol_target", type=float, default=config.VOL_TARGET)
@@ -65,15 +81,17 @@ def main():
     py = sys.executable
     os.makedirs(args.outdir, exist_ok=True)
     base = ["--data_csv", args.data_csv, "--ticker", args.ticker]
-    size = (["--quick"] if args.quick else []) + \
-           (["--full"] if args.full else [])
+    size0 = forward_args(argparse.Namespace(
+        net_arch=args.net_arch, weight_decay=args.weight_decay, passes=args.passes0,
+        steps=args.steps0, quick=args.quick))
+    size2 = forward_args(argparse.Namespace(
+        net_arch=args.meta_net_arch, weight_decay=args.weight_decay,
+        passes=args.passes2, steps=args.steps2, quick=args.quick))
 
     p0 = [py, "train_agents.py", "--start", args.train_start,
           "--end", args.train_end, "--outdir", args.outdir,
           "--seed", str(args.seed), "--cost_pct", str(args.cost_pct)] \
-          + size + base
-    if args.steps0:
-        p0 += ["--steps", str(args.steps0)]
+          + size0 + base
     sh(p0)
 
     sh([py, "train_phase1.py", "--train_start", args.train_start,
@@ -84,9 +102,7 @@ def main():
         cf = [py, "train_crossfit.py", "--train_start", args.train_start,
               "--train_end", args.train_end, "--outdir", args.outdir,
               "--seed", str(args.seed), "--cost_pct", str(args.cost_pct),
-              "--folds", str(args.cf_folds)] + size + base
-        if args.steps0:
-            cf += ["--steps", str(args.steps0)]
+              "--folds", str(args.cf_folds)] + size0 + base
         sh(cf)
 
     p2 = [py, "train_phase2.py", "--train_start", args.train_start,
@@ -94,9 +110,7 @@ def main():
           "--outdir", args.outdir, "--seed", str(args.seed),
           "--cost_pct", str(args.cost_pct),
           "--vol_target", str(args.vol_target),
-          "--meta_reward", args.meta_reward] + size + base
-    if args.steps2:
-        p2 += ["--steps", str(args.steps2)]
+          "--meta_reward", args.meta_reward] + size2 + base
     if args.no_cash:
         p2.append("--no_cash")
     if args.no_hmm:

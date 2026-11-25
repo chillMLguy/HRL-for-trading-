@@ -38,6 +38,8 @@ from regime.allocators import AGENT_ORDER
 from common.crossfit import load_stream, stream_arrays, stream_windows
 from common.data import load_prices, vix_settings
 from common.callbacks import SharpeEvalCallback
+from common.training import (add_training_args, arch_label, sac_policy_kwargs,
+                             training_settings, training_steps)
 import config
 
 
@@ -76,11 +78,8 @@ def main():
     p.add_argument("--meta_dir", default="phase2",
                    help="Folder under models/ and logs/ for this meta-agent.")
 
-    # Training budget
-    p.add_argument("--quick", action="store_true", help="40k steps, [64,64]")
-    p.add_argument("--full",  action="store_true", help="300k steps, [256,256]")
-    p.add_argument("--steps", default=0, type=int,
-                   help="Explicit timestep override (walk-forward use)")
+    # Network size, weight decay and training length (R19)
+    add_training_args(p, config.META_NET_ARCH, config.META_PASSES)
 
     # Meta design (R1/R2/R3) — defaults from config.py
     p.add_argument("--no_cash", action="store_true",
@@ -104,15 +103,7 @@ def main():
     p.add_argument("--perf_window", type=int,   default=20)
     args = p.parse_args()
 
-    if args.steps > 0:
-        timesteps, net_arch, mode = args.steps, [128, 128], "CUSTOM"
-    elif args.quick:
-        timesteps, net_arch, mode = 40_000, [64, 64], "QUICK"
-    elif args.full:
-        timesteps, net_arch, mode = 300_000, [256, 256], "FULL"
-    else:
-        timesteps, net_arch, mode = 150_000, [128, 128], "NORMAL"
-
+    net_arch = args.net_arch
     ann = BARS_PER_YEAR[args.interval]
     use_cash = not args.no_cash
     use_stream_dates = args.crossfit or args.stream_dates
@@ -126,7 +117,7 @@ def main():
     os.makedirs(log_dir, exist_ok=True)
 
     print(f"\n{'='*64}")
-    print(f"  Phase 2 — Meta-RL allocator  ({mode}: {timesteps:,} steps)")
+    print(f"  Phase 2 — Meta-RL allocator")
     print(f"  {args.ticker}   {args.train_start} → {args.train_end}")
     print(f"  reward={args.meta_reward}  cash_arm={use_cash}  "
           f"vol_target={args.vol_target}")
@@ -149,6 +140,9 @@ def main():
         n_train, n_val = len(train_prices), len(val_prices)
         n_folds = None
     print(f"  Train: {n_train} bars | Val: {n_val} bars")
+    timesteps, budget = training_steps(n_train, args.passes, args.steps, args.quick)
+    print(f"  Network: {arch_label(net_arch)}   weight decay {args.weight_decay:g}   "
+          f"steps {timesteps:,} ({budget})")
 
     subagents = {}
     if not args.crossfit:
@@ -224,7 +218,7 @@ def main():
         learning_rate=3e-4,
         buffer_size=min(100_000, timesteps),
         batch_size=256, gamma=0.99, tau=0.005, ent_coef="auto",
-        policy_kwargs=dict(net_arch=net_arch),
+        policy_kwargs=sac_policy_kwargs(net_arch, args.weight_decay),
         tensorboard_log=log_dir, seed=args.seed, verbose=0,
     )
     model.learn(total_timesteps=timesteps, callback=eval_cb,
@@ -236,7 +230,7 @@ def main():
         "train_start": args.train_start, "train_end": args.train_end,
         "interval": args.interval, "bars_per_year": ann,
         "cost_pct": args.cost_pct, "seed": args.seed, **vix_settings(),
-        "timesteps": timesteps, "net_arch": net_arch,
+        **training_settings(net_arch, args.weight_decay, timesteps, n_train, budget),
         "use_cash": use_cash, "vol_target": args.vol_target,
         "vol_target_cap": args.vol_target_cap,
         "meta_reward": args.meta_reward, "dsr_eta": args.dsr_eta,

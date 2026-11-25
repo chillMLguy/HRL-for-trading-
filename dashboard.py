@@ -1451,8 +1451,22 @@ def section_details(run):
         ("Ticker", meta.get("ticker", config.TICKER)),
         ("Agent steps", f"{p0:,}" if p0 else "unknown"),
         ("Meta-agent steps", f"{p2:,}" if p2 else "unknown"),
-        ("Transaction cost", f"{cell['cost'] * 1e4:.1f} bp per side"),
     ]
+    agent = next((c for c in cell["agent_cfg"].values() if c), {})
+    for who, c in (("Agent", agent), ("Meta-agent", meta)):
+        if c.get("net_arch") is not None:
+            arch = c["net_arch"]
+            items.append((f"{who} network", "linear" if not arch else
+                          " × ".join(str(h) for h in arch)))
+        if c.get("passes") is not None:
+            items.append((f"{who} passes over training days", f"{c['passes']:g}"))
+    wd = agent.get("weight_decay", meta.get("weight_decay"))
+    items.append(("Weight decay", "0 (Adam, before R19)" if wd is None
+                  else f"{wd:g} (AdamW)"))
+    if meta.get("use_vix") is not None:
+        items.append(("VIX inputs", f"on, {meta.get('vix_lag_days', '?')}-day lag"
+                      if meta["use_vix"] else "off"))
+    items.append(("Transaction cost", f"{cell['cost'] * 1e4:.1f} bp per side"))
     if not run["wf_cells"]:
         items.insert(1, ("Train window", f"{meta.get('train_start', '?')} to "
                                          f"{meta.get('train_end', '?')}"))
