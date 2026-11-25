@@ -1,0 +1,54 @@
+{
+  "folds": 4,
+  "min_train_frac": 0.5,
+  "train_start": "1993-02-01",
+  "train_end": "2023-12-31",
+  "cost_pct": 2e-05,
+  "seed": 42,
+  "use_vix": true,
+  "vix_lag_days": 1,
+  "vix_ticker": "^VIX",
+  "net_arch": [
+    32,
+    32
+  ],
+  "weight_decay": 0.01,
+  "passes": 15.0,
+  "steps": 0,
+  "quick": false,
+  "agent_order": [
+    "aggressive",
+    "balanced",
+    "conservative"
+  ],
+  "blocks": [
+    {
+      "fold": 1,
+      "fit_start": "1993-02-01",
+      "fit_end": "2008-07-15",
+      "block_start": "2008-07-15",
+      "block_last": "2012-05-22"
+    },
+    {
+      "fold": 2,
+      "fit_start": "1993-02-01",
+      "fit_end": "2012-05-23",
+      "block_start": "2012-05-23",
+      "block_last": "2016-04-06"
+    },
+    {
+      "fold": 3,
+      "fit_start": "1993-02-01",
+      "fit_end": "2016-04-07",
+      "block_start": "2016-04-07",
+      "block_last": "2020-02-18"
+    },
+    {
+      "fold": 4,
+      "fit_start": "1993-02-01",
+      "fit_end": "2020-02-19",
+      "block_start": "2020-02-19",
+      "block_last": "2023-12-29"
+    }
+  ]
+}
