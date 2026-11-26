@@ -1242,7 +1242,12 @@ def section_overview(run, runs, tests):
                "the walk-forward results." if years == 1 else "")
     note = ""
     p0, p2 = run_steps(run)
-    if p0 and p2 and p2 < 100_000:
+    meta_cfg = run["cells"][0]["meta_cfg"]
+    # Since R19 the budget is counted in passes, so a short run is one trained for
+    # few passes (--quick = 3), not one with few steps; older runs: 40k-step --quick.
+    short = (meta_cfg["passes"] < 5 if meta_cfg.get("passes") is not None
+             else bool(p2 and p2 < 100_000))
+    if p0 and p2 and short:
         note = (f'<p class="flag">Short training budget ({p0:,} agent steps, '
                 f"{p2:,} meta steps). This run checks the pipeline; it is not "
                 f"a thesis result.</p>")
